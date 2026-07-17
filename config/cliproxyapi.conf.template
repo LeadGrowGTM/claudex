@@ -14,10 +14,9 @@ oauth-model-alias:
       fork: true
       force-mapping: true
     # Mid tier: subagents pinned to claude-sonnet-5 (e.g. the loop-engineer
-    # harness planner/checker/prover/shipper) resolve to the flagship upstream.
-    # There is no distinct GPT "sonnet" tier, so reasoning-heavy roles map to sol
-    # (high effort) rather than the fast spark tier.
-    - name: "gpt-5.6-sol"
+    # harness planner/checker/prover/shipper) resolve to gpt-5.6-terra. Also runs
+    # max effort via the gpt-5.6-* override below (no distinct GPT "sonnet" tier).
+    - name: "gpt-5.6-terra"
       alias: "claude-sonnet-5"
       fork: true
       force-mapping: true
@@ -29,9 +28,9 @@ oauth-model-alias:
       force-mapping: true
 payload:
   override:
-    # High effort only for the flagship 5.6 tier - spark stays fast/default
+    # Max effort for the 5.6 tier (sol + terra) - spark stays fast/default
     - models:
         - name: "gpt-5.6-*"
           protocol: "codex"
       params:
-        "reasoning.effort": "high"
+        "reasoning.effort": "max"
