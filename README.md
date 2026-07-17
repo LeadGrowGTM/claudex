@@ -94,6 +94,24 @@ Your normal `claude` command is untouched - claudex sets env vars only inside it
 - **The proxy key is a local-loopback-only self-generated secret**, not a cloud credential. The Codex OAuth credential lives in `~\.cli-proxy-api\` (created by the login flow).
 - **Model identity:** inside claudex, `/context` and self-reports say "Opus 4.8" - it is GPT underneath. The alias is a routing disguise, not a lie you should forget.
 
+## Optional: claudex-aware statusline
+
+```powershell
+powershell -ExecutionPolicy Bypass -File statusline\install-statusline.ps1
+```
+
+Replaces (with backup) your Claude Code statusline with one that renders:
+
+```
+Opus 4.8 claudex:GPT-5.6-sol | repo | branch* | [███░░░░░░░] 34% (69k) | A:5h[█████]94% wk[███░░]59% | X:wk[█████]91% spk[█████]98% | th:high | wk $10.04
+```
+
+- magenta `claudex:GPT-...` marker whenever the session runs through the proxy (detected via inherited `ANTHROPIC_BASE_URL`) - the model name says Opus/Haiku, the marker tells the truth
+- `A:` Anthropic budget LEFT (5h session + week) as 5-cell bars, live from Claude Code's rate-limit feed
+- `X:` Codex budget LEFT (week + spark meter) from ChatGPT's usage API, cached 30 min, refreshed in the background via the proxy's OAuth credential
+- `th:` thinking/effort level; context bar uses Claude Code's exact window numbers
+- `wk $` estimated week spend via `ccusage` (optional; note claudex sessions inflate it at Opus rates - read as Opus-equivalent burn, not invoice)
+
 ## Uninstall
 
 ```powershell
@@ -114,10 +132,12 @@ Run `doctor.ps1` first - it pinpoints the broken link. Common fixes:
 ## Repo layout
 
 ```
-install.ps1                        one-command setup (idempotent)
-doctor.ps1                         read-only health check (-Smoke for live calls)
-uninstall.ps1                      removes autostart + profile fn, keeps credentials
-profile/claudex-function.ps1       the claudex function source (installed into your profile)
-config/cliproxyapi.conf.template   proxy config with model aliases (__PROXY_KEY__ injected)
-test/test-orchestration.ps1        8-check subagent orchestration regression test
+install.ps1                          one-command setup (idempotent)
+doctor.ps1                           read-only health check (-Smoke for live calls)
+uninstall.ps1                        removes autostart + profile fn, keeps credentials
+profile/claudex-function.ps1         the claudex function source (installed into your profile)
+config/cliproxyapi.conf.template     proxy config with model aliases (__PROXY_KEY__ injected)
+test/test-orchestration.ps1          8-check subagent orchestration regression test
+statusline/install-statusline.ps1    optional claudex-aware statusline (usage bars, GPT marker)
+statusline/statusline.ps1            the statusline renderer + background usage refreshers
 ```
