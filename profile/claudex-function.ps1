@@ -49,8 +49,12 @@ function claudex {
         $env:CLAUDE_CODE_ALWAYS_ENABLE_EFFORT = "1"
         $env:CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY = "3"
         $env:_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL = "1"
-        $extra = @()
-        if ($Yolo) { $extra += "--dangerously-skip-permissions" }
+        # Force the permission mode on the command line. Under API-token auth
+        # (ANTHROPIC_AUTH_TOKEN) Claude Code does not honor settings.json
+        # `defaultMode`, so a claudex session would otherwise start read-only.
+        # The CLI flag takes precedence and restores the intended mode.
+        $extra = @("--permission-mode", "auto")
+        if ($Yolo) { $extra = @("--dangerously-skip-permissions") }
         & $bin --model claude-opus-4-8 @extra @args
     } finally {
         $env:ANTHROPIC_BASE_URL = $origBase
