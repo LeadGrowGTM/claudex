@@ -24,6 +24,26 @@ $markerStart = "# >>> claudex >>>"
 $markerEnd   = "# <<< claudex <<<"
 
 function Step($msg) { Write-Host ">> $msg" -ForegroundColor Cyan }
+function Warn($msg) { Write-Host "!! $msg" -ForegroundColor Yellow }
+
+# --- 0. prereq checks -------------------------------------------------------
+if ($PSVersionTable.PSVersion.Major -lt 5) { throw "PowerShell 5.1+ required (found $($PSVersionTable.PSVersion))" }
+
+$claudeFound = $null
+$cmdCheck = Get-Command "claude.exe" -ErrorAction SilentlyContinue
+if ($cmdCheck) { $claudeFound = $cmdCheck.Source }
+elseif (Test-Path "$env:USERPROFILE\.local\bin\claude.exe") { $claudeFound = "$env:USERPROFILE\.local\bin\claude.exe" }
+if ($claudeFound) { Step "claude CLI found: $claudeFound" }
+else { Warn "claude CLI not found - install Claude Code first (https://claude.com/claude-code). Proxy setup will proceed; claudex won't work until claude is installed." }
+
+# port 8317 must be free or already owned by cli-proxy-api
+$portConn = Get-NetTCPConnection -LocalPort 8317 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($portConn) {
+    $portOwner = (Get-Process -Id $portConn.OwningProcess -ErrorAction SilentlyContinue).ProcessName
+    if ($portOwner -ne "cli-proxy-api") {
+        throw "port 8317 is already in use by '$portOwner' - stop it or change the port in config\cliproxyapi.conf.template and the profile function before installing"
+    }
+}
 
 # --- 1. proxy binary -------------------------------------------------------
 New-Item -ItemType Directory -Force $proxyDir | Out-Null
@@ -63,6 +83,11 @@ if (Test-Path $keyPath) {
 $confPath = "$proxyDir\cliproxyapi.conf"
 if (Test-Path $confPath) {
     Step "config already exists: $confPath (not overwritten - diff against config\cliproxyapi.conf.template for updates)"
+    $confRaw = Get-Content $confPath -Raw
+    if ($confRaw -notmatch 'alias:\s*"claude-opus-4-8"' -or $confRaw -notmatch 'alias:\s*"claude-haiku-4-5"') {
+        Warn "existing config is MISSING the model aliases - claudex will get the trimmed Claude Code harness (no skill descriptions)."
+        Warn "merge the oauth-model-alias block from config\cliproxyapi.conf.template, then restart the proxy. Verify with doctor.ps1."
+    }
 } else {
     $key = (Get-Content $keyPath -Raw).Trim()
     $conf = (Get-Content "$repoRoot\config\cliproxyapi.conf.template" -Raw).Replace("__PROXY_KEY__", $key)

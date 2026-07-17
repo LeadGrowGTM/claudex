@@ -32,24 +32,38 @@ Claude Code believes it is talking to Anthropic models and sends full prompts; t
 
 ## Install (Windows)
 
-Prereqs: Claude Code installed (`claude.exe` on PATH or `~\.local\bin`), a ChatGPT plan with Codex access.
+Prereqs (the installer validates these):
+- Windows PowerShell 5.1+ (stock Windows 11)
+- Claude Code installed (`claude.exe` on PATH or `~\.local\bin`) - warned if missing, proxy still installs
+- A ChatGPT plan with Codex access (for the OAuth login step)
+- Port 8317 free (hard error if another app owns it)
 
 ```powershell
-git clone <this-repo> claudex
+gh repo clone LeadGrowGTM/claudex   # private repo - use gh, or git clone with credentials
 cd claudex
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-The installer (idempotent, re-run to upgrade):
-1. Downloads the pinned CLIProxyAPI release to `~\.cliproxyapi\`
-2. Generates a random local proxy key (`~\.cliproxyapi\.proxykey`)
-3. Writes `cliproxyapi.conf` (model aliases + effort override) from the template
-4. Registers a hidden autostart launcher in your Startup folder
-5. Installs the `claudex` function into your PowerShell profile (marker-delimited block)
-6. Starts the proxy and runs the interactive Codex OAuth login (browser)
-7. Smoke-tests both model tiers end-to-end
+The installer (idempotent, re-run any time to upgrade or repair):
+1. Validates prereqs (PowerShell version, claude CLI, port 8317)
+2. Downloads the pinned CLIProxyAPI release to `~\.cliproxyapi\`
+3. Generates a random local proxy key (`~\.cliproxyapi\.proxykey`)
+4. Writes `cliproxyapi.conf` (model aliases + effort override) from the template; if a config already exists it is left alone, but the installer warns loudly when the model aliases are missing from it
+5. Registers a hidden autostart launcher in your Startup folder
+6. Installs the `claudex` function into your PowerShell profile (marker-delimited block, replaced on re-run)
+7. Starts the proxy and runs the interactive Codex OAuth login (browser)
+8. Smoke-tests both model tiers end-to-end
 
 Flags: `-Version <x.y.z>`, `-SkipLogin`, `-SkipAutostart`, `-SkipProfile`.
+
+## Health check
+
+```powershell
+powershell -ExecutionPolicy Bypass -File doctor.ps1          # read-only chain check
+powershell -ExecutionPolicy Bypass -File doctor.ps1 -Smoke   # + live calls through both tiers
+```
+
+Checks every link: PowerShell version, claude CLI, binary, key, config (both aliases present, debug logging off), proxy process, port 8317 ownership, live `/v1/models` listing both aliases, Codex credential, profile function. Exits nonzero on any failure - first thing to run when claudex misbehaves.
 
 ## Test the harness
 
@@ -90,7 +104,20 @@ Stops the proxy, removes autostart + the profile function. Binaries, config, key
 
 ## Troubleshooting
 
+Run `doctor.ps1` first - it pinpoints the broken link. Common fixes:
+
 - `502 unknown provider for model claude-opus-4-8` - the alias block is missing from `~\.cliproxyapi\cliproxyapi.conf`; re-run `install.ps1` after removing the conf, or merge `config\cliproxyapi.conf.template`.
 - Proxy not running - `claudex` auto-starts it; manually: `~\.cliproxyapi\start-hidden.vbs` or check `tasklist | findstr cli-proxy-api`.
 - Login expired - `~\.cliproxyapi\cli-proxy-api.exe -codex-login`.
 - Config changed but behavior didn't - restart the proxy: `Get-Process cli-proxy-api | Stop-Process -Force` then run `claudex` (auto-restart).
+
+## Repo layout
+
+```
+install.ps1                        one-command setup (idempotent)
+doctor.ps1                         read-only health check (-Smoke for live calls)
+uninstall.ps1                      removes autostart + profile fn, keeps credentials
+profile/claudex-function.ps1       the claudex function source (installed into your profile)
+config/cliproxyapi.conf.template   proxy config with model aliases (__PROXY_KEY__ injected)
+test/test-orchestration.ps1        8-check subagent orchestration regression test
+```
