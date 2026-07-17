@@ -13,6 +13,14 @@ oauth-model-alias:
       alias: "claude-opus-4-8"
       fork: true
       force-mapping: true
+    # Mid tier: subagents pinned to claude-sonnet-5 (e.g. the loop-engineer
+    # harness planner/checker/prover/shipper) resolve to the flagship upstream.
+    # There is no distinct GPT "sonnet" tier, so reasoning-heavy roles map to sol
+    # (high effort) rather than the fast spark tier.
+    - name: "gpt-5.6-sol"
+      alias: "claude-sonnet-5"
+      fork: true
+      force-mapping: true
     # Fast tier: haiku-class subagents (smart-searcher etc.) resolve
     # claude-haiku-4-5 -> gpt-5.3-codex-spark
     - name: "gpt-5.3-codex-spark"
