@@ -77,6 +77,8 @@ Spawns a headless claudex run that must orchestrate 3 parallel fresh subagents (
 
 Does GPT-under-claudex behave like native Claude in the harness? Measured across six deterministic dimensions (parallel tool batching, dedicated-tool choice, exact output contracts, CLAUDE.md adherence, slash commands, subagent delegation): **12/12 at baseline, matching native Claude's 6/6**. A steering system prompt added zero pass-rate gain and was left out of the claudex function. Native Claude remains faster on multi-step tasks. Full method, results, and latency tables: `BENCHMARKS.md`. Rerun with `bench\behavior-bench.ps1`.
 
+![claudex behavior benchmark results](bench/results/2026-07-17/benchmark.png)
+
 ## How it fits together
 
 ```

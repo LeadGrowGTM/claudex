@@ -31,6 +31,8 @@ Versions: Claude Code 2.1.212, CLIProxyAPI 7.2.83, upstream `gpt-5.6-sol` / fast
 
 ## Results
 
+![claudex behavior benchmark results](bench/results/2026-07-17/benchmark.png)
+
 Reps: baseline and steered n=2 per task, control n=1. B1 rerun after two bench-harness bugfixes (see Notes); other tasks from the full run.
 
 | Task | baseline (GPT) | steered (GPT) | control (Claude) |
