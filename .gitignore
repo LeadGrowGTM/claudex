@@ -1,2 +1,3 @@
 test-output/
 *.log
+bench-output/

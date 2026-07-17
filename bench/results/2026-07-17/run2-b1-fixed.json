@@ -1,0 +1,57 @@
+﻿[
+    {
+        "durationSec":  15.7,
+        "rep":  1,
+        "sessionId":  "8d47c823-73b8-4f0b-ad54-4cbebf730479",
+        "config":  "baseline",
+        "numTurns":  4,
+        "taskName":  "parallel tool batching",
+        "task":  "B1",
+        "pass":  true,
+        "detail":  "batchedReads=True correctTotal=True result=\u0027total=15\u0027"
+    },
+    {
+        "durationSec":  16.2,
+        "rep":  2,
+        "sessionId":  "d98664fb-6024-457c-ae59-4dfc2335201e",
+        "config":  "baseline",
+        "numTurns":  4,
+        "taskName":  "parallel tool batching",
+        "task":  "B1",
+        "pass":  true,
+        "detail":  "batchedReads=True correctTotal=True result=\u0027total=15\u0027"
+    },
+    {
+        "durationSec":  17,
+        "rep":  1,
+        "sessionId":  "3b5dcd3c-d0c1-4dc2-b2d9-dc3e757d776f",
+        "config":  "steered",
+        "numTurns":  4,
+        "taskName":  "parallel tool batching",
+        "task":  "B1",
+        "pass":  true,
+        "detail":  "batchedReads=True correctTotal=True result=\u0027total=15\u0027"
+    },
+    {
+        "durationSec":  17.3,
+        "rep":  2,
+        "sessionId":  "aa32579f-a7d5-4cb3-9564-2cbae77aca6a",
+        "config":  "steered",
+        "numTurns":  4,
+        "taskName":  "parallel tool batching",
+        "task":  "B1",
+        "pass":  true,
+        "detail":  "batchedReads=True correctTotal=True result=\u0027total=15\u0027"
+    },
+    {
+        "durationSec":  11.9,
+        "rep":  1,
+        "sessionId":  "67959fc1-0f92-48cf-be19-564b35225f74",
+        "config":  "control",
+        "numTurns":  4,
+        "taskName":  "parallel tool batching",
+        "task":  "B1",
+        "pass":  true,
+        "detail":  "batchedReads=True correctTotal=True result=\u0027total=15\u0027"
+    }
+]

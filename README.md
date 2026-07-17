@@ -73,6 +73,10 @@ powershell -ExecutionPolicy Bypass -File test\test-orchestration.ps1
 
 Spawns a headless claudex run that must orchestrate 3 parallel fresh subagents (no fork-type), two on the flagship tier and one on the fast tier, each proving execution by writing artifacts checked against known ground truth - plus transcript checks (Agent tool calls, zero forks, subagent transcript files, haiku-alias usage). 8 checks, exits nonzero on failure. Run it after any Claude Code update, proxy upgrade, or config change.
 
+## Behavior benchmarks
+
+Does GPT-under-claudex behave like native Claude in the harness? Measured across six deterministic dimensions (parallel tool batching, dedicated-tool choice, exact output contracts, CLAUDE.md adherence, slash commands, subagent delegation): **12/12 at baseline, matching native Claude's 6/6**. A steering system prompt added zero pass-rate gain and was left out of the claudex function. Native Claude remains faster on multi-step tasks. Full method, results, and latency tables: `BENCHMARKS.md`. Rerun with `bench\behavior-bench.ps1`.
+
 ## How it fits together
 
 ```
