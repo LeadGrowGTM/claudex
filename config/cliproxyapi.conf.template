@@ -1,0 +1,29 @@
+host: "127.0.0.1"
+port: 8317
+auth-dir: "~/.cli-proxy-api"
+api-keys:
+  - "__PROXY_KEY__"
+debug: false
+# Expose GPT upstreams under real Anthropic model IDs so Claude Code sends its
+# full prompts (system prompt, tool schemas, skill descriptions are trimmed for
+# unrecognized model IDs). fork keeps the plain gpt-* names working too.
+oauth-model-alias:
+  codex:
+    - name: "gpt-5.6-sol"
+      alias: "claude-opus-4-8"
+      fork: true
+      force-mapping: true
+    # Fast tier: haiku-class subagents (smart-searcher etc.) resolve
+    # claude-haiku-4-5 -> gpt-5.3-codex-spark
+    - name: "gpt-5.3-codex-spark"
+      alias: "claude-haiku-4-5"
+      fork: true
+      force-mapping: true
+payload:
+  override:
+    # High effort only for the flagship 5.6 tier - spark stays fast/default
+    - models:
+        - name: "gpt-5.6-*"
+          protocol: "codex"
+      params:
+        "reasoning.effort": "high"
