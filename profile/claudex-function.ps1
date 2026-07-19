@@ -39,16 +39,19 @@ function claudex {
     $origBase       = $env:ANTHROPIC_BASE_URL
     $origToken      = $env:ANTHROPIC_AUTH_TOKEN
     $origHaiku      = $env:ANTHROPIC_DEFAULT_HAIKU_MODEL
-    $origEffort     = $env:CLAUDE_CODE_ALWAYS_ENABLE_EFFORT
-    $origConc       = $env:CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY
     $origFirstParty = $env:_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL
+    $origWindow     = $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW
     try {
         $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8317"
         $env:ANTHROPIC_AUTH_TOKEN = $proxyKey
         $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "claude-haiku-4-5"
-        $env:CLAUDE_CODE_ALWAYS_ENABLE_EFFORT = "1"
-        $env:CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY = "3"
         $env:_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL = "1"
+        # _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL also satisfies Claude Code's
+        # native-1M gate, so claude-opus-4-8 / claude-sonnet-5 would otherwise get
+        # a 1,000,000-token budget against a ~258k upstream ceiling and overflow
+        # instead of compacting. See profile\claudex-function.sh for the decoded
+        # gate and the live /context measurements.
+        $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "240000"
         # Force the permission mode on the command line. Under API-token auth
         # (ANTHROPIC_AUTH_TOKEN) Claude Code does not honor settings.json
         # `defaultMode`, so a claudex session would otherwise start read-only.
@@ -60,8 +63,14 @@ function claudex {
         $env:ANTHROPIC_BASE_URL = $origBase
         $env:ANTHROPIC_AUTH_TOKEN = $origToken
         $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = $origHaiku
-        $env:CLAUDE_CODE_ALWAYS_ENABLE_EFFORT = $origEffort
-        $env:CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY = $origConc
         $env:_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL = $origFirstParty
+        $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = $origWindow
     }
 }
+
+# Removed, both verified no-ops or harmful in this configuration:
+#   CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=1     Dk() checks its deny-list BEFORE the
+#     env var, and claude-opus-4-8 already resolves true via NG(r,"effort").
+#   CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY=3 K3g() caps client-side tool execution
+#     concurrency (default 10); it does not touch parallel_tool_calls sent to the
+#     model. Pure latency cost, and latency is already the measured weak point.
