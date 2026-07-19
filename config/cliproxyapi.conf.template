@@ -4,6 +4,12 @@ auth-dir: "~/.cli-proxy-api"
 api-keys:
   - "__PROXY_KEY__"
 debug: false
+# CLIProxyAPI otherwise appends an unrequested {"type":"image_generation"} tool to
+# every Codex request. Claude Code never asked for it, and it perturbs the tool
+# array that prompt-cache prefix matching needs byte-identical between requests.
+# 4-state enum: off (default) | true | chat | passthrough. "chat" stops the
+# injection but keeps /v1/images/* alive; "true" also 404s those endpoints.
+disable-image-generation: chat
 # Expose GPT upstreams under real Anthropic model IDs so Claude Code sends its
 # full prompts (system prompt, tool schemas, skill descriptions are trimmed for
 # unrecognized model IDs). fork keeps the plain gpt-* names working too.
