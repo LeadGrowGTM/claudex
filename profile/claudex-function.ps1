@@ -65,6 +65,9 @@ function claudex {
         # (ANTHROPIC_AUTH_TOKEN) Claude Code does not honor settings.json
         # `defaultMode`, so a claudex session would otherwise start read-only.
         # The CLI flag takes precedence and restores the intended mode.
+        # auto also covers every Task/Agent subagent: a parent in auto forces
+        # subagents to inherit auto and ignores any permissionMode in their
+        # frontmatter, so no separate subagent-permission handling is needed.
         $extra = @("--permission-mode", "auto")
         if ($Yolo) { $extra = @("--dangerously-skip-permissions") }
         & $bin --model claude-opus-4-8 @extra @args
