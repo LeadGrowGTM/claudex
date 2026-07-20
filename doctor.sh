@@ -120,8 +120,13 @@ fi
 # 7. window sizing (the fix that keeps claudex from overflowing upstream)
 FN="$PROXY_DIR/claudex-function.sh"
 if [ -f "$FN" ]; then
-    check "$(grep -q 'CLAUDE_CODE_AUTO_COMPACT_WINDOW' "$FN" && echo 1 || echo 0)" \
+    win=$(grep -v '^[[:space:]]*#' "$FN" | grep -oE 'CLAUDE_CODE_AUTO_COMPACT_WINDOW=[0-9]+' | grep -oE '[0-9]+' | head -1)
+    check "$([ -n "$win" ] && echo 1 || echo 0)" \
           "context window pinned" "without it, native_1m aliases get a 1M budget vs ~258k upstream"
+    # present-but-too-high (e.g. 240k) still 400s: Anthropic tokenizer undercounts
+    # GPT-5.6-sol 5-12%, so a thin buffer lands the compaction request over ~258k.
+    check "$([ -n "$win" ] && [ "$win" -le 210000 ] && echo 1 || echo 0)" \
+          "context window headroom" "AUTO_COMPACT_WINDOW must be <=210000: ~258k ceiling minus tokenizer skew + one fat tool result"
 fi
 
 # 8. optional live smoke

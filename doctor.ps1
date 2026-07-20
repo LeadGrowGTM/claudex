@@ -107,13 +107,24 @@ foreach ($p in @($hostProfile, $PROFILE.CurrentUserAllHosts)) {
 }
 Check "profile function installed" $profileOk "marker block in PowerShell profile"
 
-# 7b. the context-window pin must be present, or native_1m aliases
-# (claude-opus-4-8, claude-sonnet-5) get a 1M budget against a ~258k upstream.
+# 7b. the context-window pin must be present AND set with real headroom under the
+# ~258k upstream ceiling. Present-but-too-high (e.g. 240k) still 400s: Claude Code
+# counts with the Anthropic tokenizer, GPT-5.6-sol counts 5-12% higher, so a thin
+# buffer lands the compaction request itself over the ceiling. Cap at 210000.
 $fnPinned = $false
+$fnHeadroom = $false
 foreach ($p in @($hostProfile, $PROFILE.CurrentUserAllHosts)) {
-    if ($p -and (Test-Path $p) -and ((Get-Content $p -Raw) -match 'CLAUDE_CODE_AUTO_COMPACT_WINDOW')) { $fnPinned = $true; break }
+    if ($p -and (Test-Path $p)) {
+        $raw = Get-Content $p -Raw
+        if ($raw -match 'CLAUDE_CODE_AUTO_COMPACT_WINDOW\s*=\s*"(\d+)"') {
+            $fnPinned = $true
+            if ([int]$Matches[1] -le 210000) { $fnHeadroom = $true }
+            break
+        }
+    }
 }
 Check "context window pinned" $fnPinned "without it, native_1m aliases get a 1M budget vs ~258k upstream"
+Check "context window headroom" $fnHeadroom "AUTO_COMPACT_WINDOW must be <=210000: ~258k ceiling minus tokenizer skew + one fat tool result"
 
 # 7c. no claudex env vars leaked into this shell. The function scopes them to its
 # own invocation and restores them in a finally block, so they must not be set
