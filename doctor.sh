@@ -100,6 +100,23 @@ fi
 check "$(grep -qF '# >>> claudex >>>' "$HOME/.bashrc" "$HOME/.zshrc" 2>/dev/null && echo 1 || echo 0)" \
       "shell function installed" "marker block in ~/.bashrc or ~/.zshrc"
 
+# 6b. no claudex env vars leaked into this shell.
+# claudex scopes them to the child via env(1), so they must never be set here.
+# If they are, this shell's plain `claude` loses Remote Control and claude.ai
+# features: Remote Control's gate is tqe() -> GUn(), which requires
+# ANTHROPIC_BASE_URL unset or api.anthropic.com, and ANTHROPIC_AUTH_TOKEN
+# switches auth to api-key mode. Expected to trip only when run from inside a
+# claudex session, which is harmless.
+LEAKED=""
+for v in ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL; do
+    [ -n "${!v:-}" ] && LEAKED="$LEAKED $v"
+done
+if [ -n "$LEAKED" ]; then
+    warns "claudex env leaked" "set in this shell:$LEAKED - plain 'claude' here loses Remote Control and claude.ai features (fine if you are inside a claudex session)"
+else
+    ok "no claudex env leaked" "plain 'claude' in this shell keeps Remote Control"
+fi
+
 # 7. window sizing (the fix that keeps claudex from overflowing upstream)
 FN="$PROXY_DIR/claudex-function.sh"
 if [ -f "$FN" ]; then
