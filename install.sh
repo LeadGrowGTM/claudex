@@ -124,6 +124,9 @@ if [ "$SKIP_PROFILE" -eq 0 ]; then
     # Copy the function next to the config and source it, so re-running the
     # installer upgrades the function without rewriting ~/.bashrc.
     install -m 0644 "$REPO_ROOT/profile/claudex-function.sh" "$PROXY_DIR/claudex-function.sh"
+    # claudex-aware statusline, installed but not wired up - pointing
+    # settings.json at it is the user's call, see README.
+    install -m 0755 "$REPO_ROOT/statusline/statusline.sh" "$PROXY_DIR/statusline.sh"
     RC="$HOME/.bashrc"
     [ -n "${ZSH_VERSION:-}" ] && RC="$HOME/.zshrc"
     touch "$RC"

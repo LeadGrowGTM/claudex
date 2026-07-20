@@ -12,14 +12,20 @@ claudex -p "do the thing"  # headless one-shot
 
 Pointing Claude Code at a non-Anthropic model via `ANTHROPIC_BASE_URL` mostly works - but Claude Code silently degrades the harness for any model ID it does not recognize (exact internal-registry match; a `claude-` prefix is NOT enough):
 
+Measured with `/context` through the same proxy, same upstream, **only the model ID varied**:
+
 | Payload section | unknown ID (`gpt-5.6-sol`) | recognized ID (`claude-opus-4-8`) |
 |---|---|---|
-| System prompt | minimal stub, no communication/memory guidance | full |
-| Core tool schemas | compact | full per-model variant |
-| Skill listing | bare names, ALL descriptions stripped | full descriptions |
-| MCP servers | silently dropped | loaded |
+| **Skills** | **2.7k** - names only, descriptions stripped | **10k** - full descriptions |
+| System prompt | 1.4k minimal stub | 1.6k full |
+| Tool schemas | 5.9k sent up front - tool search is disabled for unrecognized IDs, so nothing can be deferred | deferred |
+| MCP servers | 1.1k - loaded | 1.1k - loaded |
+| Custom agents | 2.3k | 2.3k |
+| Memory files | 3.9k | 3.9k |
 
-Stripped skill descriptions are the killer: the model cannot know when to invoke any skill. Verified empirically by capturing request payloads at the proxy (same auth, same endpoint, only the model ID varied).
+Stripped skill descriptions are the killer: **73% of the skill payload disappears**, so the model sees skill names but cannot know when to invoke any of them.
+
+Two things this measurement corrected, both previously asserted here without evidence: MCP servers are **not** dropped for unrecognized IDs, and tool schemas are not "compact" - an unrecognized ID actually sends *more* tool tokens up front, because deferred tool search is unavailable to it.
 
 **The fix:** [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) runs as a local proxy authenticated to your ChatGPT account, and its `oauth-model-alias` exposes GPT upstreams under real Anthropic model IDs:
 
@@ -152,6 +158,22 @@ Opus 4.8 claudex:GPT-5.6-sol | repo | branch* | [███░░░░░░░]
 - `th:` thinking/effort level; context bar uses Claude Code's exact window numbers
 - `wk $` estimated week spend via `ccusage` (optional; note claudex sessions inflate it at Opus rates - read as Opus-equivalent burn, not invoice)
 
+### Linux statusline
+
+`install.sh` drops a claudex-aware statusline at `~/.cliproxyapi/statusline.sh` but does **not** wire it up. To use it, point `~/.claude/settings.json` at it (back the file up first):
+
+```json
+"statusLine": { "type": "command", "command": "/home/you/.cliproxyapi/statusline.sh" }
+```
+
+It is a superset of a plain statusline - identical output for normal sessions - and adds a marker naming the real upstream when the session runs through the proxy, resolved by reverse-mapping `model.id` through `cliproxyapi.conf`:
+
+```
+Opus 4.8 claudex:gpt-5.6-sol | ~$1.23 | Context: 8% | +5/-2 lines | Wk: 59%
+```
+
+The `~$` is deliberate: that figure is a floor, priced at Anthropic rates and missing cache-write tokens the translator drops. Without this marker a claudex session and a real Opus session look identical, which matters once you run both.
+
 ## Uninstall
 
 ```powershell
@@ -181,4 +203,5 @@ config/cliproxyapi.conf.template     proxy config with model aliases (__PROXY_KE
 test/test-orchestration.ps1          8-check subagent orchestration regression test
 statusline/install-statusline.ps1    optional claudex-aware statusline (usage bars, GPT marker)
 statusline/statusline.ps1            the statusline renderer + background usage refreshers
+statusline/statusline.sh             bash statusline with the claudex upstream marker
 ```
