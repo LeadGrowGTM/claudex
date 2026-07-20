@@ -79,16 +79,15 @@ claudex() {
 #   240000 leaves headroom for the compaction request itself to fit under ~258k.
 #   ponytail: single global value; per-tier windows would need a wrapper per model.
 #
-# NOT SET, candidate pending measurement - ENABLE_TOOL_SEARCH=false
-#   Claude Code disables deferred tool search on its own for non-first-party
-#   hosts ("Set ENABLE_TOOL_SEARCH=true if your proxy forwards tool_reference
-#   blocks"), but that check is `vn()==="firstParty" && !Nd()` - so the
-#   assume-first-party flag above defeats it and claudex runs tool search on.
-#   Setting it false would restore Claude Code's own choice. NOT adopted: it was
-#   never observed to change behavior, whether CLIProxyAPI forwards
-#   tool_reference blocks is unverified, and `standard` mode sends every tool
-#   schema up front - which risks OpenAI's 128-tool cap on a large MCP loadout.
-#   Count tools via /context first, then bench with and without.
+# NOT SET, and verified correct to leave unset - ENABLE_TOOL_SEARCH=false
+#   Claude Code disables deferred tool search for non-first-party hosts ("Set
+#   ENABLE_TOOL_SEARCH=true if your proxy forwards tool_reference blocks"), but
+#   that check is `vn()==="firstParty" && !Nd()` - so the assume-first-party flag
+#   above defeats it and tool search stays on. That turns out to be fine:
+#   CLIProxyAPI does forward tool_reference blocks. Verified through the proxy -
+#   /context reports tools deferred, and a prompt needing the deferred WebFetch
+#   tool made GPT load the schema via ToolSearch and complete the fetch. Setting
+#   it false would send every schema up front, ~5k extra tokens, for no gain.
 #
 # REMOVED - CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=1
 #   No-op in this configuration. Dk() checks its deny-list BEFORE the env var,
