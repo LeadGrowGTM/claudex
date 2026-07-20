@@ -57,13 +57,14 @@ claudex() {
         ANTHROPIC_AUTH_TOKEN="$key" \
         ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5" \
         _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1 \
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW=240000 \
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000 \
+        MAX_MCP_OUTPUT_TOKENS=25000 \
         "$bin" --model claude-opus-4-8 "${extra[@]}" "$@"
 }
 
 # --- why this env var is set, and why two others were removed ----------------
 #
-# CLAUDE_CODE_AUTO_COMPACT_WINDOW=240000
+# CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000
 #   _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1 (needed so Claude Code treats the
 #   proxy as first-party) also satisfies Claude Code's native-1M gate:
 #       TM(): if(!ctx?.native_1m) return false; if(provider==="firstParty" && Nd()) return true  -> 1e6
@@ -76,8 +77,18 @@ claudex() {
 #       AUTO_COMPACT_WINDOW=250000    -> 250k
 #       MAX_CONTEXT_TOKENS=272000     -> 1m  (ignored: gated to non-"claude-" IDs)
 #       DISABLE_COMPACT + MAX_CONTEXT -> 272k (but kills /compact entirely)
-#   240000 leaves headroom for the compaction request itself to fit under ~258k.
-#   ponytail: single global value; per-tier windows would need a wrapper per model.
+#   200000 (was 240000): Claude Code counts the window with the Anthropic
+#   tokenizer; upstream GPT-5.6-sol counts the same payload 5-12% higher, so a
+#   240k Claude-count can be 260k+ GPT-tokens and 400 - the compaction request
+#   itself included, which then cannot recover (observed: hard 400 mid-session).
+#   ~58k buffer absorbs the tokenizer skew plus one fat tool result landing
+#   between compact checks. ponytail: single global value; per-tier windows would
+#   need a wrapper per model.
+#
+# MAX_MCP_OUTPUT_TOKENS=25000
+#   Auto-compact fires between turns; a single huge MCP result (getleads/nexus)
+#   injected mid-turn can spike one request past ~258k before the next check.
+#   Capping the per-result size removes that spike path.
 #
 # NOT SET, and verified correct to leave unset - ENABLE_TOOL_SEARCH=false
 #   Claude Code disables deferred tool search for non-first-party hosts ("Set

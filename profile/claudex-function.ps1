@@ -51,7 +51,16 @@ function claudex {
         # a 1,000,000-token budget against a ~258k upstream ceiling and overflow
         # instead of compacting. See profile\claudex-function.sh for the decoded
         # gate and the live /context measurements.
-        $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "240000"
+        # 200000 (not 240000): Claude Code counts the window with the Anthropic
+        # tokenizer, upstream GPT-5.6-sol counts the same payload 5-12% higher, so
+        # a 240k Claude-count could be 260k+ GPT-tokens and 400 - including the
+        # compaction request itself, which then can't recover. ~58k buffer absorbs
+        # the skew plus a single fat tool result landing between compact checks.
+        $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "200000"
+        # Cap any single MCP result (getleads/nexus can be huge) so one tool
+        # response can't spike a request past the ~258k ceiling between checks.
+        $origMcpOut = $env:MAX_MCP_OUTPUT_TOKENS
+        $env:MAX_MCP_OUTPUT_TOKENS = "25000"
         # Force the permission mode on the command line. Under API-token auth
         # (ANTHROPIC_AUTH_TOKEN) Claude Code does not honor settings.json
         # `defaultMode`, so a claudex session would otherwise start read-only.
@@ -65,6 +74,7 @@ function claudex {
         $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = $origHaiku
         $env:_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL = $origFirstParty
         $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = $origWindow
+        $env:MAX_MCP_OUTPUT_TOKENS = $origMcpOut
     }
 }
 
