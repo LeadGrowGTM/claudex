@@ -44,6 +44,9 @@ claudex() {
     # Force the permission mode on the command line. Under API-token auth
     # (ANTHROPIC_AUTH_TOKEN) Claude Code does not honor settings.json
     # `defaultMode`, so a claudex session would otherwise start read-only.
+    # auto also covers every Task/Agent subagent: a parent in auto forces
+    # subagents to inherit auto and ignores any permissionMode in their
+    # frontmatter, so no separate subagent-permission handling is needed.
     local extra=(--permission-mode auto)
     if [ "$1" = "-Yolo" ] || [ "$1" = "--yolo" ]; then
         extra=(--dangerously-skip-permissions)
