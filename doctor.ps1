@@ -43,11 +43,30 @@ if ($confOk) {
     if ($conf -match 'request-log:\s*true' -or $conf -match 'debug:\s*true') {
         Warn "config: debug logging" "request/debug logging is ON - payload logs accumulate in $authDir\logs"
     }
+    if ($conf -match 'alias:\s*"claude-sonnet-5"') {
+        Warn "config: sonnet-5 alias" "claude-sonnet-5 is native_1m in Claude Code -> 1M budget vs ~258k upstream. Covered by CLAUDE_CODE_AUTO_COMPACT_WINDOW; drop the alias if subagents overflow."
+    }
+    if ($conf -notmatch 'disable-image-generation') {
+        Warn "config: image generation" "unset - an unrequested image_generation tool is appended to every request (perturbs the stable tool array prompt-cache prefix matching needs)"
+    }
 }
 
 # 4. proxy process + port
 $proc = Get-Process cli-proxy-api -ErrorAction SilentlyContinue
 Check "proxy process" ([bool]$proc) $(if ($proc) { "pid $($proc.Id)" } else { "not running (claudex auto-starts it, or run install.ps1)" })
+
+# The Codex reasoning replay cache is process-local memory with a 1h TTL
+# (CodexReasoningReplayCacheTTL). A proxy younger than the session has lost the
+# reasoning lineage for it - no error is raised, the session just starts
+# forgetting why it did things. Cheapest high-value check in this script.
+if ($proc) {
+    $up = [int]((Get-Date) - $proc.StartTime).TotalSeconds
+    if ($up -lt 3600) {
+        Warn "proxy uptime" "${up}s (<1h) - if a session predates this restart, its reasoning replay cache is gone; expect repetition/odd tool choices. Restart the session, not the proxy."
+    } else {
+        Check "proxy uptime" $true "${up}s"
+    }
+}
 
 $portOwnedByProxy = $false
 $conn = Get-NetTCPConnection -LocalPort 8317 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -87,6 +106,27 @@ foreach ($p in @($hostProfile, $PROFILE.CurrentUserAllHosts)) {
     }
 }
 Check "profile function installed" $profileOk "marker block in PowerShell profile"
+
+# 7b. the context-window pin must be present, or native_1m aliases
+# (claude-opus-4-8, claude-sonnet-5) get a 1M budget against a ~258k upstream.
+$fnPinned = $false
+foreach ($p in @($hostProfile, $PROFILE.CurrentUserAllHosts)) {
+    if ($p -and (Test-Path $p) -and ((Get-Content $p -Raw) -match 'CLAUDE_CODE_AUTO_COMPACT_WINDOW')) { $fnPinned = $true; break }
+}
+Check "context window pinned" $fnPinned "without it, native_1m aliases get a 1M budget vs ~258k upstream"
+
+# 7c. no claudex env vars leaked into this shell. The function scopes them to its
+# own invocation and restores them in a finally block, so they must not be set
+# here. If they are, this shell's plain `claude` loses Remote Control (gate is
+# tqe() -> GUn(), which requires ANTHROPIC_BASE_URL unset or api.anthropic.com)
+# and claude.ai features (ANTHROPIC_AUTH_TOKEN forces api-key auth).
+$leaked = @("ANTHROPIC_BASE_URL","ANTHROPIC_AUTH_TOKEN","_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL") |
+    Where-Object { [Environment]::GetEnvironmentVariable($_) }
+if ($leaked) {
+    Warn "claudex env leaked" "set in this shell: $($leaked -join ', ') - plain 'claude' here loses Remote Control and claude.ai features (fine if you are inside a claudex session)"
+} else {
+    Check "no claudex env leaked" $true "plain 'claude' in this shell keeps Remote Control"
+}
 
 # 8. optional live smoke
 if ($Smoke) {

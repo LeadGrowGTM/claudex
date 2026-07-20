@@ -85,8 +85,15 @@ if (Test-Path $confPath) {
     Step "config already exists: $confPath (not overwritten - diff against config\cliproxyapi.conf.template for updates)"
     $confRaw = Get-Content $confPath -Raw
     if ($confRaw -notmatch 'alias:\s*"claude-opus-4-8"' -or $confRaw -notmatch 'alias:\s*"claude-haiku-4-5"') {
-        Warn "existing config is MISSING the model aliases - claudex will get the trimmed Claude Code harness (no skill descriptions)."
+        Warn "existing config is MISSING the model aliases - claudex will get the trimmed Claude Code harness (skill descriptions drop ~73%, 10k -> 2.7k)."
         Warn "merge the oauth-model-alias block from config\cliproxyapi.conf.template, then restart the proxy. Verify with doctor.ps1."
+    }
+    # An existing config is never overwritten, so upgrades silently skip new
+    # keys. Call this one out by name - it is the difference between a stable
+    # tool array and one that defeats prompt-cache prefix matching.
+    if ($confRaw -notmatch 'disable-image-generation') {
+        Warn "existing config is missing 'disable-image-generation' - CLIProxyAPI appends an unrequested image_generation tool to every request, mutating the tool array that prompt-cache prefix matching needs byte-identical."
+        Warn "add 'disable-image-generation: chat' at the TOP LEVEL of $confPath (it is a 4-state enum: off|true|chat|passthrough, not a boolean), then restart the proxy."
     }
 } else {
     $key = (Get-Content $keyPath -Raw).Trim()
