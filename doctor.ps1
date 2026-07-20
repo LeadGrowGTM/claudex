@@ -116,7 +116,7 @@ $fnHeadroom = $false
 foreach ($p in @($hostProfile, $PROFILE.CurrentUserAllHosts)) {
     if ($p -and (Test-Path $p)) {
         $raw = Get-Content $p -Raw
-        if ($raw -match 'CLAUDE_CODE_AUTO_COMPACT_WINDOW\D+(\d+)') {
+        if ($raw -match 'CLAUDE_CODE_AUTO_COMPACT_WINDOW\s*=\s*"(\d+)"') {
             $fnPinned = $true
             if ([int]$Matches[1] -le 210000) { $fnHeadroom = $true }
             break
