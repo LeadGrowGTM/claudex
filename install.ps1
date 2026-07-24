@@ -121,8 +121,18 @@ if ($NativeCompaction) {
         if ($gitExit -ne 0) { throw "git init failed for $nativeCompactionSource" }
     }
 
-    $nativeOrigin = (& $git.Source -C $nativeCompactionSource remote get-url origin 2>$null | Out-String).Trim()
-    $hasNativeOrigin = ($LASTEXITCODE -eq 0 -and [bool]$nativeOrigin)
+    # `remote get-url origin` on a freshly-init'd repo (no remote yet) writes to
+    # stderr and exits nonzero. Under EAP=Stop, PS5.1 turns that native stderr
+    # into a terminating error before the else-branch runs, so probe with
+    # EAP=Continue and read the exit code explicitly.
+    $savedEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $nativeOrigin = (& $git.Source -C $nativeCompactionSource remote get-url origin 2>$null | Out-String).Trim()
+        $hasNativeOrigin = ($LASTEXITCODE -eq 0 -and [bool]$nativeOrigin)
+    } finally {
+        $ErrorActionPreference = $savedEap
+    }
     if ($hasNativeOrigin) {
         if ($nativeOrigin -ne $nativeCompactionRepo) {
             throw "native compaction source origin must be $nativeCompactionRepo (found '$nativeOrigin')"
@@ -132,8 +142,16 @@ if ($NativeCompaction) {
         if ($gitExit -ne 0) { throw "git remote add failed for $nativeCompactionSource" }
     }
 
-    $nativeHead = (& $git.Source -C $nativeCompactionSource rev-parse --verify HEAD 2>$null | Out-String).Trim()
-    $hasNativeHead = ($LASTEXITCODE -eq 0)
+    # `rev-parse --verify HEAD` before the first commit writes to stderr and exits
+    # nonzero; same EAP=Stop hazard as the origin probe above.
+    $savedEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $nativeHead = (& $git.Source -C $nativeCompactionSource rev-parse --verify HEAD 2>$null | Out-String).Trim()
+        $hasNativeHead = ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $savedEap
+    }
     if ($hasNativeHead -and $nativeHead -ne $nativeCompactionCommit) {
         throw "native compaction source must be exactly $nativeCompactionCommit (found '$nativeHead')"
     }
