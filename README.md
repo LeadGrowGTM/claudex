@@ -144,7 +144,7 @@ powershell -ExecutionPolicy Bypass -File bench\performance-parity.ps1 -Live -Var
 
 For controlled P1/P2 tests, `bench\set-effort-profile.ps1 -Profile P1` removes only the canonical wildcard override. It writes a date-stamped backup containing the old public effort block and full-config hash, never a copy of the key-bearing config. `-Profile P0` restores the canonical block. Restart CLIProxyAPI normally after a change.
 
-A live run must be requested with `-Live`. Matched P0 and P1 runs are recorded: P1 is the selected profile (no latency penalty versus P0, faster classifier, no forced-max Terra cancellation), and Claudex organically delegated the three-module task in 3/3 runs while native did it inline - so Claudex does not trail native on delegation. P2 was not needed. The organic fixture cannot prove a symmetric "delegates exactly like native" claim because native sets a zero-delegation baseline on it; that narrower claim stays unproven. Full results, method, and caveats: `BENCHMARKS.md`.
+A live run must be requested with `-Live`. Matched P0 and P1 runs are recorded: P1 is the selected profile (no latency penalty versus P0, faster classifier, no forced-max Terra cancellation), and Claudex organically delegated the three-module task in 3/3 runs while native did it inline - so Claudex does not trail native on delegation. P2 was not needed. A heavier six-module fixture (`organic6`) confirmed native's non-delegation is scale-independent, so the symmetric "delegates exactly like native" claim is dropped rather than pursued further. Full results, method, and caveats: `BENCHMARKS.md`.
 
 ![claudex behavior benchmark results](bench/results/2026-07-17/benchmark.png)
 
