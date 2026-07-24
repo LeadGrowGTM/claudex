@@ -94,7 +94,7 @@ Under WSL2 with `networkingMode=mirrored`, a Windows-side proxy on `127.0.0.1:83
 
 ## Permission modes and safety boundary
 
-Default `claudex` uses `acceptEdits` with a Claudex-only settings file. This avoids a separate Terra safety-classifier request for routine local work while keeping explicit policy boundaries:
+Default `claudex` uses `acceptEdits` with a Claudex-only settings file, applied with `--settings`. That flag *merges* the Claudex policy as a union over your ambient `~/.claude` settings - it does not replace them - and precedence is deny > ask > allow. So the Claudex `deny` and `ask` rules bind no matter what ambient allows (destructive, publication, and deploy actions stay gated), but the Claudex `allow` list cannot *narrow* an already-broad ambient `allow`: a general command your ambient settings already allow still runs. This avoids a separate Terra safety-classifier request for routine local work while keeping explicit policy boundaries:
 
 - Dedicated file tools, narrow PowerShell inspection, read-only Git/GitHub commands, and common test runners are allowed.
 - Conventional deletion and truncation commands, destructive Git operations, force flags, and cross-shell escapes are denied.
@@ -184,6 +184,26 @@ A live run must be requested with `-Live`. Matched P0 and P1 runs are recorded: 
 
 ![claudex behavior benchmark results](bench/results/2026-07-17/benchmark.png)
 
+## Native tools and the system prompt under claudex
+
+The known-ID alias is only half the story - the proxy still has to forward what Claude Code sends, and it does. CLIProxyAPI's Claude-to-Codex request translator (`internal/translator/codex/claude/codex_claude_request.go`) maps Claude's `system` prompt into a `developer` message inside the Codex `input[]` array (the `system` -> `role:"developer"` conversion), forwards the full `tools` array unchanged, and leaves the top-level `instructions` field empty - no Codex system prompt overrides Claude's. `tool_reference` blocks survive too: verified live, a claudex session loaded a deferred tool schema via `ToolSearch` and completed the call. So any recognition gap is behavioral (the model not reaching for a tool), not a forwarding drop.
+
+Per tool, on the GPT path:
+
+| Tool | Status |
+|---|---|
+| `Agent` | verified used |
+| `Skill` | verified used |
+| `ToolSearch` (deferred schema load) | verified used |
+| `TaskCreate` / `TaskUpdate` | verified used |
+| `Read` / `Write` / `Edit` / `Bash` / `PowerShell` | verified used |
+| `AskUserQuestion` | interactive-only - headless `-p` reports "not enabled in this context", identical to stock claude |
+| `Task` / `TodoWrite` | superseded by `Agent` / `TaskCreate` - not used, expected |
+
+### MCP and Nexus on the GPT path
+
+Local MCP tools and the Nexus knowledge graph are reachable and return real data under claudex - proven live: a claudex session loaded the deferred `nexus_search` schema and got real graph hits (25 of them). But GPT under claudex does not invoke MCP tools *organically* (0 of 81 past sessions reached for one unprompted). Workaround: name the MCP tool explicitly in the prompt, or force it through a skill that calls it.
+
 ## How it fits together
 
 ```
@@ -199,6 +219,7 @@ Your normal `claude` command is untouched - claudex sets env vars only inside it
 
 - **`CLAUDE_CODE_SUBAGENT_MODEL` must stay unset.** It overrides per-agent model frontmatter and forces every subagent onto the flagship tier (found via the orchestration test).
 - **Alias must be an exact known Anthropic ID.** `claude-gpt-5.6-sol` still gets the trimmed harness; the registry check is exact-match.
+- **Subagent model IDs must resolve, too.** Every agent's frontmatter `model:` has to hit one of the three aliases (`claude-opus-4-8` / `claude-sonnet-5` / `claude-haiku-4-5`) or a bare tier name backed by the `ANTHROPIC_DEFAULT_{HAIKU,SONNET}_MODEL` launcher pins. A dated or variant ID (e.g. `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`) needs its own `oauth-model-alias` entry, or the spawn 502s "unknown provider". `doctor` now warns on any unmapped agent model.
 - **The context window is pinned to 200k by the claudex function, and this is load-bearing.** `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1` (needed so Claude Code treats the proxy as first-party) also satisfies Claude Code's native-1M gate: `TM()` returns `1e6` when the model is `native_1m` and `provider==="firstParty" && Nd()`, and `Nd()` returns true for exactly that env var. Both `claude-opus-4-8` and `claude-sonnet-5` are `native_1m`, so an unpinned claudex session gets a **1,000,000-token budget against a ~258k upstream ceiling** (272k catalog x 0.95 effective) and overflows instead of compacting. `CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000` moves the trigger below the real ceiling. Verified live via `/context`: unset -> `1m`; `AUTO_COMPACT_WINDOW=250000` -> `250k`; `CLAUDE_CODE_MAX_CONTEXT_TOKENS=272000` alone -> `1m` (ignored - `aNc()` gates it to model IDs that do *not* start with `claude-`); `DISABLE_COMPACT=1` + `MAX_CONTEXT_TOKENS=272000` -> `272k`, but that also removes `/compact` entirely. 200k (not 240k) leaves a ~58k buffer: Claude Code counts the window with the Anthropic tokenizer, but upstream GPT-5.6-sol counts the same payload 5-12% higher, so a thinner buffer let the compaction request itself land over the ceiling and fail to recover. `doctor.ps1`/`doctor.sh` assert the pinned value is `<=210000`, not just present. `MAX_MCP_OUTPUT_TOKENS=25000` is also set, capping any single MCP result so one large tool response can't spike a request past the ceiling between compact checks.
 - **The fast tier is still oversized.** `claude-haiku-4-5` is not `native_1m`, so it gets Claude Code's 200k default - against `gpt-5.3-codex-spark`'s real 128k. `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is global, so it can't fix one tier without lowering all of them. Keep haiku-tier subagent work short.
 - **Deferred tool search runs under claudex, and that's fine - leave `ENABLE_TOOL_SEARCH` unset.** Claude Code disables it for non-first-party hosts (*"Set ENABLE_TOOL_SEARCH=true if your proxy forwards tool_reference blocks"*), but that check is `vn()==="firstParty" && !Nd()`, which the assume-first-party flag defeats - so tool search stays on. Verified working end to end: `/context` reports tools as deferred, and a prompt requiring the deferred `WebFetch` tool caused GPT to load the schema via ToolSearch and complete the fetch. CLIProxyAPI does forward `tool_reference` blocks. Setting `ENABLE_TOOL_SEARCH=false` would switch to `standard` mode and send every schema up front - about 5k extra tokens per session on this loadout, for no gain.
