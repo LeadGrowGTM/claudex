@@ -15,7 +15,10 @@ claudex() {
     local proxy_dir="$HOME/.cliproxyapi"
     local key_path="$proxy_dir/.proxykey"
     local settings_path="$proxy_dir/claudex.settings.json"
-    local bin conf key
+    local native_compaction_commit="725aa9f1bd61c76edb315ae80c7be6215198621a"
+    local native_compaction_marker="$proxy_dir/.native-compaction-enabled"
+    local proxy_bin="$proxy_dir/cli-proxy-api"
+    local bin conf key marked_commit running_path
 
     if [ ! -f "$key_path" ]; then
         echo "claudex: proxy key not found at $key_path (run install.sh first)" >&2
@@ -40,20 +43,46 @@ claudex() {
         return 1
     fi
 
+    if [ -f "$native_compaction_marker" ]; then
+        marked_commit=$(tr -d '[:space:]' <"$native_compaction_marker")
+        if [ "$marked_commit" != "$native_compaction_commit" ]; then
+            echo "claudex: unsupported native compaction marker '$marked_commit'" >&2
+            return 1
+        fi
+        proxy_bin="$proxy_dir/native-compaction-$native_compaction_commit/cli-proxy-api"
+    fi
+    if [ ! -x "$proxy_bin" ]; then
+        echo "claudex: selected proxy binary not found at $proxy_bin (re-run install.sh)" >&2
+        return 1
+    fi
+
     bin=$(command -v claude 2>/dev/null) || bin="$HOME/.local/bin/claude"
     if [ ! -x "$bin" ]; then
         echo "claudex: claude not found on PATH or in ~/.local/bin" >&2
         return 1
     fi
 
-    # Auto-start the proxy if it is not already running.
+    # Auto-start the selected proxy channel. Refuse a stale process from the
+    # other channel so a marker change cannot silently keep old behavior.
     # `setsid --fork` detaches into a new session and returns immediately; a plain
     # `nohup ... &` leaves the daemon parented here, so a non-interactive shell
     # blocks in wait() and `claudex -p ...` never returns.
-    if ! pgrep -x cli-proxy-api >/dev/null 2>&1; then
+    local proxy_pid
+    proxy_pid=$(pgrep -x cli-proxy-api 2>/dev/null | head -1 || true)
+    if [ -n "$proxy_pid" ]; then
+        running_path=$(readlink -f "/proc/$proxy_pid/exe" 2>/dev/null || true)
+        if [ -z "$running_path" ]; then
+            echo "claudex: cannot verify the binary for proxy pid $proxy_pid; stop it and retry" >&2
+            return 1
+        fi
+        if [ "$running_path" != "$(readlink -f "$proxy_bin")" ]; then
+            echo "claudex: proxy channel changed; stop pid $proxy_pid and retry" >&2
+            return 1
+        fi
+    else
         echo "claudex: starting CLIProxyAPI..." >&2
         conf="$proxy_dir/cliproxyapi.conf"
-        ( cd "$proxy_dir" && setsid --fork ./cli-proxy-api -config "$conf" \
+        ( cd "$proxy_dir" && setsid --fork "$proxy_bin" -config "$conf" \
             >>"$proxy_dir/proxy.log" 2>&1 </dev/null )
         sleep 2
     fi

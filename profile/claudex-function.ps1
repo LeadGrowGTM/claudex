@@ -39,6 +39,22 @@ function claudex {
         return
     }
 
+    $nativeCompactionCommit = "725aa9f1bd61c76edb315ae80c7be6215198621a"
+    $nativeCompactionMarker = "$proxyDir\.native-compaction-enabled"
+    $proxyBin = "$proxyDir\cli-proxy-api.exe"
+    if (Test-Path $nativeCompactionMarker) {
+        $markedCommit = (Get-Content $nativeCompactionMarker -Raw).Trim()
+        if ($markedCommit -ne $nativeCompactionCommit) {
+            Write-Host "claudex: unsupported native compaction marker '$markedCommit'" -ForegroundColor Red
+            return
+        }
+        $proxyBin = "$proxyDir\native-compaction-$nativeCompactionCommit\cli-proxy-api.exe"
+    }
+    if (-not (Test-Path $proxyBin)) {
+        Write-Host "claudex: selected proxy binary not found at $proxyBin (re-run install.ps1)" -ForegroundColor Red
+        return
+    }
+
     $bin = $null
     $cmd = Get-Command "claude.exe" -ErrorAction SilentlyContinue
     if ($cmd) { $bin = $cmd.Source }
@@ -48,10 +64,22 @@ function claudex {
         return
     }
 
-    # Auto-start the proxy if it is not already running
-    if (-not (Get-Process cli-proxy-api -ErrorAction SilentlyContinue)) {
+    # Auto-start the selected proxy channel. Refuse a stale process from the
+    # other channel so a marker change cannot silently keep old behavior.
+    $proxyProc = Get-Process cli-proxy-api -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($proxyProc) {
+        $runningPath = $proxyProc.Path
+        if (-not $runningPath) {
+            Write-Host "claudex: cannot verify the binary for proxy pid $($proxyProc.Id); stop it and retry" -ForegroundColor Red
+            return
+        }
+        if ([System.IO.Path]::GetFullPath($runningPath) -ne [System.IO.Path]::GetFullPath($proxyBin)) {
+            Write-Host "claudex: proxy channel changed; stop pid $($proxyProc.Id) and retry" -ForegroundColor Red
+            return
+        }
+    } else {
         Write-Host "claudex: starting CLIProxyAPI..." -ForegroundColor DarkGray
-        Start-Process -FilePath "$proxyDir\cli-proxy-api.exe" -ArgumentList "-config", "$proxyDir\cliproxyapi.conf" -WorkingDirectory $proxyDir -WindowStyle Hidden
+        Start-Process -FilePath $proxyBin -ArgumentList "-config", "$proxyDir\cliproxyapi.conf" -WorkingDirectory $proxyDir -WindowStyle Hidden
         Start-Sleep -Seconds 2
     }
 

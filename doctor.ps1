@@ -10,6 +10,11 @@ param([switch]$Smoke)
 $ErrorActionPreference = "Continue"
 $proxyDir = "$env:USERPROFILE\.cliproxyapi"
 $authDir  = "$env:USERPROFILE\.cli-proxy-api"
+$nativeCompactionCommit = "725aa9f1bd61c76edb315ae80c7be6215198621a"
+$nativeCompactionMarker = "$proxyDir\.native-compaction-enabled"
+$nativeCompactionSource = "$proxyDir\sources\CLIProxyAPI-$nativeCompactionCommit"
+$nativeCompactionExe = "$proxyDir\native-compaction-$nativeCompactionCommit\cli-proxy-api.exe"
+$selectedProxyExe = "$proxyDir\cli-proxy-api.exe"
 $pass = 0; $fail = 0; $warn = 0
 
 function Check($name, $ok, $detail) {
@@ -31,7 +36,29 @@ elseif (Test-Path "$env:USERPROFILE\.local\bin\claude.exe") { $claudeBin = "$env
 Check "claude CLI" ([bool]$claudeBin) "$claudeBin"
 
 # 3. proxy binary / key / config
-Check "proxy binary" (Test-Path "$proxyDir\cli-proxy-api.exe") "$proxyDir\cli-proxy-api.exe"
+Check "proxy binary: stable" (Test-Path "$proxyDir\cli-proxy-api.exe") "$proxyDir\cli-proxy-api.exe"
+if (Test-Path $nativeCompactionMarker) {
+    $markedCommit = (Get-Content $nativeCompactionMarker -Raw).Trim()
+    $markerOk = ($markedCommit -eq $nativeCompactionCommit)
+    Check "proxy channel: native" $markerOk "pinned commit: $markedCommit"
+    Check "native compaction binary" (Test-Path $nativeCompactionExe) $nativeCompactionExe
+    $selectedProxyExe = $nativeCompactionExe
+
+    $git = Get-Command "git" -ErrorAction SilentlyContinue
+    if ($git -and (Test-Path "$nativeCompactionSource\.git")) {
+        $nativeHead = (& $git.Source -C $nativeCompactionSource rev-parse --verify HEAD 2>$null | Out-String).Trim()
+        $nativeHeadOk = ($LASTEXITCODE -eq 0)
+        $nativeDirty = (& $git.Source -C $nativeCompactionSource status --porcelain --untracked-files=all 2>$null | Out-String).Trim()
+        $nativeStatusOk = ($LASTEXITCODE -eq 0)
+        Check "native source pin" ($nativeHeadOk -and $nativeHead -eq $nativeCompactionCommit) "HEAD: $nativeHead"
+        Check "native source clean" ($nativeStatusOk -and -not $nativeDirty) $nativeCompactionSource
+    } else {
+        Check "native source pin" $false "Git or source checkout missing: $nativeCompactionSource"
+    }
+    Warn "native compaction status" "experimental upstream draft #4465 is active"
+} else {
+    Check "proxy channel: stable" $true "official release binary"
+}
 Check "proxy key" (Test-Path "$proxyDir\.proxykey") "$proxyDir\.proxykey"
 $confPath = "$proxyDir\cliproxyapi.conf"
 $confOk = Test-Path $confPath
@@ -76,8 +103,17 @@ if ($settings) {
 }
 
 # 4. proxy process + port
-$proc = Get-Process cli-proxy-api -ErrorAction SilentlyContinue
+$proc = Get-Process cli-proxy-api -ErrorAction SilentlyContinue | Select-Object -First 1
 Check "proxy process" ([bool]$proc) $(if ($proc) { "pid $($proc.Id)" } else { "not running (claudex auto-starts it, or run install.ps1)" })
+if ($proc) {
+    if ($proc.Path) {
+        $livePath = [System.IO.Path]::GetFullPath($proc.Path)
+        $selectedPath = [System.IO.Path]::GetFullPath($selectedProxyExe)
+        Check "proxy channel live" ($livePath -eq $selectedPath) "running: $livePath"
+    } else {
+        Check "proxy channel live" $false "could not inspect binary path for pid $($proc.Id)"
+    }
+}
 
 # The Codex reasoning replay cache is process-local memory with a 1h TTL
 # (CodexReasoningReplayCacheTTL). A proxy younger than the session has lost the

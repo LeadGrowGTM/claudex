@@ -13,6 +13,11 @@ SMOKE=0
 PROXY_DIR="$HOME/.cliproxyapi"
 AUTH_DIR="$HOME/.cli-proxy-api"
 CONF="$PROXY_DIR/cliproxyapi.conf"
+NATIVE_COMPACTION_COMMIT="725aa9f1bd61c76edb315ae80c7be6215198621a"
+NATIVE_COMPACTION_MARKER="$PROXY_DIR/.native-compaction-enabled"
+NATIVE_COMPACTION_SOURCE="$PROXY_DIR/sources/CLIProxyAPI-$NATIVE_COMPACTION_COMMIT"
+NATIVE_COMPACTION_BIN="$PROXY_DIR/native-compaction-$NATIVE_COMPACTION_COMMIT/cli-proxy-api"
+SELECTED_PROXY_BIN="$PROXY_DIR/cli-proxy-api"
 pass=0; fail=0; warn=0
 
 ok()    { printf '\033[32mOK    %-32s %s\033[0m\n' "$1" "${2:-}"; pass=$((pass+1)); }
@@ -28,7 +33,34 @@ CLAUDE_BIN="$(command -v claude 2>/dev/null || true)"
 check "$([ -n "$CLAUDE_BIN" ] && echo 1 || echo 0)" "claude CLI" "$CLAUDE_BIN"
 
 # 2. proxy binary / key / config
-check "$([ -x "$PROXY_DIR/cli-proxy-api" ] && echo 1 || echo 0)" "proxy binary" "$PROXY_DIR/cli-proxy-api"
+check "$([ -x "$PROXY_DIR/cli-proxy-api" ] && echo 1 || echo 0)" "proxy binary: stable" "$PROXY_DIR/cli-proxy-api"
+if [ -f "$NATIVE_COMPACTION_MARKER" ]; then
+    marked_commit="$(tr -d '[:space:]' <"$NATIVE_COMPACTION_MARKER")"
+    check "$([ "$marked_commit" = "$NATIVE_COMPACTION_COMMIT" ] && echo 1 || echo 0)" \
+          "proxy channel: native" "pinned commit: $marked_commit"
+    check "$([ -x "$NATIVE_COMPACTION_BIN" ] && echo 1 || echo 0)" \
+          "native compaction binary" "$NATIVE_COMPACTION_BIN"
+    SELECTED_PROXY_BIN="$NATIVE_COMPACTION_BIN"
+    if command -v git >/dev/null && [ -d "$NATIVE_COMPACTION_SOURCE/.git" ]; then
+        if native_head="$(git -C "$NATIVE_COMPACTION_SOURCE" rev-parse --verify HEAD 2>/dev/null)"; then
+            check "$([ "$native_head" = "$NATIVE_COMPACTION_COMMIT" ] && echo 1 || echo 0)" \
+                  "native source pin" "HEAD: $native_head"
+        else
+            bad "native source pin" "could not read HEAD: $NATIVE_COMPACTION_SOURCE"
+        fi
+        if native_dirty="$(git -C "$NATIVE_COMPACTION_SOURCE" status --porcelain --untracked-files=all 2>/dev/null)"; then
+            check "$([ -z "$native_dirty" ] && echo 1 || echo 0)" \
+                  "native source clean" "$NATIVE_COMPACTION_SOURCE"
+        else
+            bad "native source clean" "could not inspect: $NATIVE_COMPACTION_SOURCE"
+        fi
+    else
+        bad "native source pin" "Git or source checkout missing: $NATIVE_COMPACTION_SOURCE"
+    fi
+    warns "native compaction status" "experimental upstream draft #4465 is active"
+else
+    ok "proxy channel: stable" "official release binary"
+fi
 check "$([ -f "$PROXY_DIR/.proxykey" ] && echo 1 || echo 0)" "proxy key" "$PROXY_DIR/.proxykey"
 check "$([ -f "$CONF" ] && echo 1 || echo 0)" "config file" "$CONF"
 
@@ -79,6 +111,10 @@ fi
 PID="$(pgrep -x cli-proxy-api 2>/dev/null | head -1 || true)"
 if [ -n "$PID" ]; then
     ok "proxy process" "pid $PID"
+    live_path="$(readlink -f "/proc/$PID/exe" 2>/dev/null || true)"
+    selected_path="$(readlink -f "$SELECTED_PROXY_BIN" 2>/dev/null || true)"
+    check "$([ -n "$live_path" ] && [ "$live_path" = "$selected_path" ] && echo 1 || echo 0)" \
+          "proxy channel live" "running: $live_path"
 else
     bad "proxy process" "not running (claudex auto-starts it, or run install.sh)"
 fi
