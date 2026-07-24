@@ -39,16 +39,40 @@ Check "config file" $confOk $confPath
 if ($confOk) {
     $conf = Get-Content $confPath -Raw
     Check "config: opus alias" ($conf -match 'alias:\s*"claude-opus-4-8"') "claude-opus-4-8 -> gpt-5.6-sol"
+    Check "config: sonnet alias" ($conf -match 'alias:\s*"claude-sonnet-5"') "claude-sonnet-5 -> gpt-5.6-terra"
     Check "config: haiku alias" ($conf -match 'alias:\s*"claude-haiku-4-5"') "claude-haiku-4-5 -> gpt-5.3-codex-spark"
     if ($conf -match 'request-log:\s*true' -or $conf -match 'debug:\s*true') {
         Warn "config: debug logging" "request/debug logging is ON - payload logs accumulate in $authDir\logs"
     }
-    if ($conf -match 'alias:\s*"claude-sonnet-5"') {
-        Warn "config: sonnet-5 alias" "claude-sonnet-5 is native_1m in Claude Code -> 1M budget vs ~258k upstream. Covered by CLAUDE_CODE_AUTO_COMPACT_WINDOW; drop the alias if subagents overflow."
-    }
     if ($conf -notmatch 'disable-image-generation') {
         Warn "config: image generation" "unset - an unrequested image_generation tool is appended to every request (perturbs the stable tool array prompt-cache prefix matching needs)"
     }
+    if ($conf -match 'name:\s*"gpt-5\.6-\*"[\s\S]*?"reasoning\.effort":\s*"max"') {
+        Warn "config: role effort" "legacy gpt-5.6-* maximum override is active - classifiers and Terra subagents cannot use lower effort"
+    } else {
+        Check "config: role effort" $true "per-request effort reaches classifiers and subagents"
+    }
+}
+
+# 3b. Claudex-only policy and routing settings
+$settingsPath = "$proxyDir\claudex.settings.json"
+$settings = $null
+Check "Claudex settings file" (Test-Path $settingsPath) $settingsPath
+if (Test-Path $settingsPath) {
+    try { $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json } catch {}
+    Check "Claudex settings JSON" ([bool]$settings) "valid JSON"
+}
+if ($settings) {
+    $allow = @($settings.permissions.allow)
+    $ask = @($settings.permissions.ask)
+    $deny = @($settings.permissions.deny)
+    Check "policy: Agent allowed" ($allow -contains "Agent") "static allow avoids classifier startup"
+    Check "policy: PowerShell inspection" ($allow -contains "PowerShell(Get-ChildItem *)") "dedicated tool parity"
+    Check "policy: deletion denied" (($deny -contains "Bash(rm *)") -and ($deny -contains "PowerShell(Remove-Item *)")) "Bash and PowerShell"
+    Check "policy: push asks" (($ask -contains "Bash(git push *)") -and ($ask -contains "PowerShell(git push *)")) "human checkpoint"
+    Check "policy: auto defaults" ((@($settings.autoMode.allow) -contains '$defaults') -and (@($settings.autoMode.environment) -contains '$defaults')) "allow and environment"
+    $codexOverrides = @($settings.skillOverrides.PSObject.Properties | Where-Object { $_.Name -like "codex-*" -and "$($_.Value)" -eq "user-invocable-only" })
+    Check "routing: Codex-only skills" ($codexOverrides.Count -eq 8) "$($codexOverrides.Count)/8 hidden from automatic routing"
 }
 
 # 4. proxy process + port
@@ -90,6 +114,7 @@ if ($portOwnedByProxy -and (Test-Path "$proxyDir\.proxykey")) {
     } catch {}
     Check "proxy /v1/models" ($models.Count -gt 0) "$($models.Count) models"
     Check "alias live: claude-opus-4-8" ($models -contains "claude-opus-4-8") ""
+    Check "alias live: claude-sonnet-5" ($models -contains "claude-sonnet-5") ""
     Check "alias live: claude-haiku-4-5" ($models -contains "claude-haiku-4-5") ""
 }
 
@@ -100,12 +125,23 @@ Check "codex credential" ([bool]$cred) $(if ($cred) { $cred.Name } else { "run: 
 # 7. profile function
 $hostProfile = "$env:USERPROFILE\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
 $profileOk = $false
+$installedFunctionRaw = ""
 foreach ($p in @($hostProfile, $PROFILE.CurrentUserAllHosts)) {
     if ($p -and (Test-Path $p)) {
-        if ((Get-Content $p -Raw) -match [regex]::Escape("# >>> claudex >>>")) { $profileOk = $true; break }
+        $candidate = Get-Content $p -Raw
+        if ($candidate -match [regex]::Escape("# >>> claudex >>>")) {
+            $profileOk = $true
+            $installedFunctionRaw = $candidate
+            break
+        }
     }
 }
 Check "profile function installed" $profileOk "marker block in PowerShell profile"
+if ($profileOk) {
+    Check "profile: settings wired" ($installedFunctionRaw -match '--settings') "$settingsPath"
+    Check "profile: default permission" ($installedFunctionRaw -match 'permission-mode",\s*"acceptEdits"') "acceptEdits"
+    Check "profile: explicit auto" ($installedFunctionRaw -match 'if \(\$Auto\).*permission-mode",\s*"auto"') "-Auto"
+}
 
 # 7b. the context-window pin must be present AND set with real headroom under the
 # ~258k upstream ceiling. Present-but-too-high (e.g. 240k) still 400s: Claude Code
@@ -137,6 +173,29 @@ if ($leaked) {
     Warn "claudex env leaked" "set in this shell: $($leaked -join ', ') - plain 'claude' here loses Remote Control and claude.ai features (fine if you are inside a claudex session)"
 } else {
     Check "no claudex env leaked" $true "plain 'claude' in this shell keeps Remote Control"
+}
+
+# 7d. recent proxy failures, metadata only. Request-body sections are skipped.
+$errorLogDir = "$authDir\logs"
+$error500 = 0; $error502 = 0; $error503 = 0; $authUnavailable = 0; $contextCanceled = 0
+$recentErrorFiles = @(Get-ChildItem $errorLogDir -Filter "error-v1-messages-*.log" -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge (Get-Date).AddHours(-24) })
+foreach ($file in $recentErrorFiles) {
+    $skipBody = $false
+    foreach ($line in [System.IO.File]::ReadLines($file.FullName)) {
+        if ($line -match '^--- .*REQUEST BODY.*---$') { $skipBody = $true; continue }
+        if ($line -match '^--- .*RESPONSE.*---$') { $skipBody = $false; continue }
+        if ($skipBody -or $line.Length -gt 4096) { continue }
+        if ($line -match '(?i)^status(?: code)?:\s*500\b|HTTP\s+500\b') { $error500++ }
+        if ($line -match '(?i)^status(?: code)?:\s*502\b|HTTP\s+502\b') { $error502++ }
+        if ($line -match '(?i)^status(?: code)?:\s*503\b|HTTP\s+503\b') { $error503++ }
+        if ($line -match '(?i)auth_unavailable|no auth available') { $authUnavailable++ }
+        if ($line -match '(?i)context canceled') { $contextCanceled++ }
+    }
+}
+if ($recentErrorFiles.Count -gt 0) {
+    Warn "proxy errors (24h)" "files=$($recentErrorFiles.Count) HTTP500=$error500 HTTP502=$error502 HTTP503=$error503 auth_unavailable=$authUnavailable context_canceled=$contextCanceled"
+} else {
+    Check "proxy errors (24h)" $true "none"
 }
 
 # 8. optional live smoke

@@ -2,11 +2,14 @@
 
 Run OpenAI GPT models inside Claude Code on your ChatGPT/Codex subscription - with the FULL Claude Code harness: complete system prompt, tool schemas, skill descriptions, subagent orchestration, hooks, rules, and memory.
 
-```
-claudex                    # interactive GPT-5.6 Sol session in Claude Code
-claudex -Yolo              # same, with --dangerously-skip-permissions
+```powershell
+claudex                    # safe low-friction mode: acceptEdits + Claudex policy
+claudex -Auto              # explicit Claude Code auto-mode classifier
+claudex -Yolo              # explicit --dangerously-skip-permissions bypass
 claudex -p "do the thing"  # headless one-shot
 ```
+
+On Linux, use `claudex --auto` and `claudex --yolo`. Auto and Yolo are mutually exclusive. The launcher fails closed if its Claudex settings file is missing or invalid.
 
 ## Why this exists (the model-ID trim problem)
 
@@ -29,12 +32,15 @@ Two things this measurement corrected, both previously asserted here without evi
 
 **The fix:** [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) runs as a local proxy authenticated to your ChatGPT account, and its `oauth-model-alias` exposes GPT upstreams under real Anthropic model IDs:
 
-| Claude Code sees | Actual upstream | Reasoning effort |
-|---|---|---|
-| `claude-opus-4-8` | `gpt-5.6-sol` | high (forced) |
-| `claude-haiku-4-5` | `gpt-5.3-codex-spark` | default (fast) |
+| Claude Code sees | Actual upstream | Role | Effort (P1) |
+|---|---|---|---|
+| `claude-opus-4-8` | `gpt-5.6-sol` | main session and Opus agents | maximum (launcher `--effort max`) |
+| `claude-sonnet-5` | `gpt-5.6-terra` | auto-mode classifier and Sonnet agents | passthrough |
+| `claude-haiku-4-5` | `gpt-5.3-codex-spark` | Haiku agents | upstream default |
 
-Claude Code believes it is talking to Anthropic models and sends full prompts; the proxy routes to Codex. Two tiers means haiku-class subagents (discovery/mechanical work) stay fast while the flagship handles reasoning - mirroring a native Claude Code cheap/expensive split.
+Claude Code believes it is talking to Anthropic models and sends full prompts; the proxy routes to Codex. Sol, Terra, and Spark preserve the native expensive/medium/fast role split.
+
+The proxy template ships performance profile P1 (selected after measurement): no wildcard effort override. Per-request effort passes through, so the Terra safety classifier and Spark subagents run at their own tier instead of being forced to max - the forced-max path caused a ~60s Terra classify that ended in `context canceled` and HTTP 500 on routine auto-mode checks. The flagship main session still reasons at max because the launcher passes `--effort max`. Profile choice and matched-run evidence: `BENCHMARKS.md`.
 
 ## Install (Windows)
 
@@ -54,11 +60,12 @@ The installer (idempotent, re-run any time to upgrade or repair):
 1. Validates prereqs (PowerShell version, claude CLI, port 8317)
 2. Downloads the pinned CLIProxyAPI release to `~\.cliproxyapi\`
 3. Generates a random local proxy key (`~\.cliproxyapi\.proxykey`)
-4. Writes `cliproxyapi.conf` (model aliases + effort override) from the template; if a config already exists it is left alone, but the installer warns loudly when the model aliases are missing from it
-5. Registers a hidden autostart launcher in your Startup folder
-6. Installs the `claudex` function into your PowerShell profile (marker-delimited block, replaced on re-run)
-7. Starts the proxy and runs the interactive Codex OAuth login (browser)
-8. Smoke-tests both model tiers end-to-end
+4. Writes `cliproxyapi.conf` (model aliases, P1 effort passthrough) from the template; if a config already exists it is left alone, but the installer warns loudly when the model aliases are missing from it. An existing config that still carries the legacy P0 wildcard override is flagged by `doctor` with the exact non-secret migration
+5. Validates and installs non-secret `claudex.settings.json`; a changed installed copy is backed up under a unique date-stamped `~\.cliproxyapi\archive\` directory before replacement
+6. Registers a hidden autostart launcher in your Startup folder
+7. Installs the `claudex` function into your PowerShell profile (marker-delimited block, replaced on re-run)
+8. Starts the proxy and runs the interactive Codex OAuth login (browser)
+9. Smoke-tests both model tiers end-to-end
 
 Flags: `-Version <x.y.z>`, `-SkipLogin`, `-SkipAutostart`, `-SkipProfile`.
 
@@ -85,6 +92,20 @@ Differences from the Windows path:
 
 Under WSL2 with `networkingMode=mirrored`, a Windows-side proxy on `127.0.0.1:8317` *is* reachable from WSL - so you can point a WSL `claudex` at a Windows proxy instead of installing a second one. That keeps one credential, at the cost of depending on an `[experimental]` `.wslconfig` setting.
 
+## Permission modes and safety boundary
+
+Default `claudex` uses `acceptEdits` with a Claudex-only settings file. This avoids a separate Terra safety-classifier request for routine local work while keeping explicit policy boundaries:
+
+- Dedicated file tools, narrow PowerShell inspection, read-only Git/GitHub commands, and common test runners are allowed.
+- Conventional deletion and truncation commands, destructive Git operations, force flags, and cross-shell escapes are denied.
+- Push, PR writes, issue writes, release actions, package publication, and deploy commands ask for human approval.
+- `Agent` is statically allowed in the default mode. Parent `acceptEdits` policy remains authoritative inside every child, so subagent frontmatter cannot raise permissions.
+- Eight Codex CLI port skills are `user-invocable-only`. They remain available by name but cannot auto-load false guidance such as "subagents do not exist" into a Claudex session.
+
+`claudex -Auto` or `claudex --auto` opts into Claude Code auto mode. Claudex restores auto mode's default allow and environment sets, but remaining actions still need the Sonnet classifier. This mode costs an extra model request and can fail when Terra is unavailable. `-Yolo` or `--yolo` remains an explicit bypass and is never the default.
+
+The settings file stores policy only. It contains no proxy key, OAuth token, API key, or credential path.
+
 ## Health check
 
 ```powershell
@@ -97,19 +118,33 @@ powershell -ExecutionPolicy Bypass -File doctor.ps1 -Smoke   # + live calls thro
 ./doctor.sh --smoke    # + live calls through both tiers
 ```
 
-Checks every link: PowerShell version, claude CLI, binary, key, config (both aliases present, debug logging off), proxy process, port 8317 ownership, live `/v1/models` listing both aliases, Codex credential, profile function. Exits nonzero on any failure - first thing to run when claudex misbehaves.
+Checks every link: Claude CLI, proxy binary/key/config, all model aliases, Claudex settings JSON and key policy rules, installed launcher mode, legacy wildcard effort override, proxy process and port, live `/v1/models`, Codex credential, context-window pin, environment leakage, and recent proxy 500/502/503, `auth_unavailable`, and `context canceled` metadata. Request bodies are skipped. Exits nonzero on any failed health check.
 
 ## Test the harness
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File test\test-performance-policy-contract.ps1
 powershell -ExecutionPolicy Bypass -File test\test-orchestration.ps1
 ```
 
-Spawns a headless claudex run that must orchestrate 3 parallel fresh subagents (no fork-type), two on the flagship tier and one on the fast tier, each proving execution by writing artifacts checked against known ground truth - plus transcript checks (Agent tool calls, zero forks, subagent transcript files, haiku-alias usage). 8 checks, exits nonzero on failure. Run it after any Claude Code update, proxy upgrade, or config change.
+The policy contract is offline. It checks settings structure, safety rules, launcher modes, installer backup order, benchmark safeguards, and effort-profile recognition without calling a model.
 
-## Behavior benchmarks
+The orchestration test is live and intentionally forces three parallel Agent calls. It proves Agent availability, fresh child transcripts, aggregation, and Haiku/Spark routing. It does not prove that a model chooses delegation on its own.
 
-Does GPT-under-claudex behave like native Claude in the harness? Measured across six deterministic dimensions (parallel tool batching, dedicated-tool choice, exact output contracts, CLAUDE.md adherence, slash commands, subagent delegation): **12/12 at baseline, matching native Claude's 6/6**. A steering system prompt added zero pass-rate gain and was left out of the claudex function. Native Claude remains faster on multi-step tasks. Full method, results, and latency tables: `BENCHMARKS.md`. Rerun with `bench\behavior-bench.ps1`.
+## Behavior and performance benchmarks
+
+The 2026-07-17 behavior suite passed **12/12 Claudex checks and 6/6 native checks** across tool batching, tool choice, exact outputs, workspace rules, slash commands, and forced Agent availability. Its B6 prompt explicitly requires Agent, so that result cannot support an organic-delegation parity claim. A broad steering prompt added no pass-rate gain and remains unwired.
+
+`bench\performance-parity.ps1` adds outcome-only organic delegation, routine permission handling, explicit auto-classifier latency, and custom-agent model routing. Dry mode is the default and spends no quota:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File bench\performance-parity.ps1
+powershell -ExecutionPolicy Bypass -File bench\performance-parity.ps1 -Live -Variants claudex-policy,native-policy -Scenarios routine,organic,routing -Reps 3 -Profile P1
+```
+
+For controlled P1/P2 tests, `bench\set-effort-profile.ps1 -Profile P1` removes only the canonical wildcard override. It writes a date-stamped backup containing the old public effort block and full-config hash, never a copy of the key-bearing config. `-Profile P0` restores the canonical block. Restart CLIProxyAPI normally after a change.
+
+A live run must be requested with `-Live`. Matched P0 and P1 runs are recorded: P1 is the selected profile (no latency penalty versus P0, faster classifier, no forced-max Terra cancellation), and Claudex organically delegated the three-module task in 3/3 runs while native did it inline - so Claudex does not trail native on delegation. P2 was not needed. The organic fixture cannot prove a symmetric "delegates exactly like native" claim because native sets a zero-delegation baseline on it; that narrower claim stays unproven. Full results, method, and caveats: `BENCHMARKS.md`.
 
 ![claudex behavior benchmark results](bench/results/2026-07-17/benchmark.png)
 
@@ -186,22 +221,28 @@ Stops the proxy, removes autostart + the profile function. Binaries, config, key
 
 Run `doctor.ps1` first - it pinpoints the broken link. Common fixes:
 
-- `502 unknown provider for model claude-opus-4-8` - the alias block is missing from `~\.cliproxyapi\cliproxyapi.conf`; re-run `install.ps1` after removing the conf, or merge `config\cliproxyapi.conf.template`.
+- `502 unknown provider for model claude-opus-4-8` - the alias block is missing from `~\.cliproxyapi\cliproxyapi.conf`. Back up the current config, merge the `oauth-model-alias` block from `config\cliproxyapi.conf.template`, then restart normally.
+- `claudex: settings not found` or invalid settings JSON - re-run the installer. It backs up a changed non-secret settings file before replacement.
+- `auto mode cannot determine action safety` - Terra classifier failed. Use default `claudex` for policy-controlled local work; reserve `-Auto` for explicit classifier testing or higher scrutiny.
 - Proxy not running - `claudex` auto-starts it; manually: `~\.cliproxyapi\start-hidden.vbs` or check `tasklist | findstr cli-proxy-api`.
 - Login expired - `~\.cliproxyapi\cli-proxy-api.exe -codex-login`.
-- Config changed but behavior didn't - restart the proxy: `Get-Process cli-proxy-api | Stop-Process -Force` then run `claudex` (auto-restart).
+- Config changed but behavior did not - stop the proxy normally with `Get-Process cli-proxy-api | Stop-Process`, then run `claudex` to auto-start it.
 
 ## Repo layout
 
 ```
-install.ps1 / install.sh             one-command setup (idempotent) - Windows / Linux
-doctor.ps1  / doctor.sh              read-only health check (-Smoke / --smoke for live calls)
-uninstall.ps1                        removes autostart + profile fn, keeps credentials
-profile/claudex-function.ps1         the claudex function source (installed into your profile)
-profile/claudex-function.sh          bash/zsh counterpart - keep the two in sync
-config/cliproxyapi.conf.template     proxy config with model aliases (__PROXY_KEY__ injected)
-test/test-orchestration.ps1          8-check subagent orchestration regression test
-statusline/install-statusline.ps1    optional claudex-aware statusline (usage bars, GPT marker)
-statusline/statusline.ps1            the statusline renderer + background usage refreshers
-statusline/statusline.sh             bash statusline with the claudex upstream marker
+install.ps1 / install.sh                    one-command setup (idempotent) - Windows / Linux
+doctor.ps1  / doctor.sh                     read-only health check (-Smoke / --smoke for live calls)
+uninstall.ps1                               removes autostart + profile fn, keeps credentials
+profile/claudex-function.ps1                Windows launcher source
+profile/claudex-function.sh                 bash/zsh launcher source - keep modes in sync
+config/cliproxyapi.conf.template            proxy aliases and current effort profile
+config/claudex.settings.json                non-secret Claudex safety and skill-routing policy
+test/test-performance-policy-contract.ps1   offline policy/install/launcher contract
+test/test-orchestration.ps1                 live forced-Agent availability regression
+bench/performance-parity.ps1                routine, classifier, organic, and routing benchmark
+bench/set-effort-profile.ps1                non-secret P0/P1/P2 proxy effort switcher
+statusline/install-statusline.ps1           optional claudex-aware statusline (usage bars, GPT marker)
+statusline/statusline.ps1                   statusline renderer + background usage refreshers
+statusline/statusline.sh                    bash statusline with Claudex upstream marker
 ```

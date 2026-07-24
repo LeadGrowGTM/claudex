@@ -106,8 +106,9 @@ CONF_PATH="$PROXY_DIR/cliproxyapi.conf"
 if [ -f "$CONF_PATH" ]; then
     step "config already exists: $CONF_PATH (not overwritten - diff against config/cliproxyapi.conf.template for updates)"
     grep -q 'alias:[[:space:]]*"claude-opus-4-8"' "$CONF_PATH" && \
+    grep -q 'alias:[[:space:]]*"claude-sonnet-5"' "$CONF_PATH" && \
     grep -q 'alias:[[:space:]]*"claude-haiku-4-5"' "$CONF_PATH" || {
-        warn "existing config is MISSING the model aliases - claudex will get the trimmed Claude Code harness (no skill descriptions)."
+        warn "existing config is MISSING one or more model aliases - claudex routing or the full Claude Code harness will fail."
         warn "merge the oauth-model-alias block from config/cliproxyapi.conf.template, then restart the proxy. Verify with doctor.sh."
     }
     grep -q 'disable-image-generation' "$CONF_PATH" || \
@@ -119,7 +120,32 @@ else
     step "wrote config -> $CONF_PATH"
 fi
 
-# --- 4. shell function ------------------------------------------------------
+# --- 4. Claudex settings ---------------------------------------------------
+SETTINGS_SOURCE="$REPO_ROOT/config/claudex.settings.json"
+SETTINGS_PATH="$PROXY_DIR/claudex.settings.json"
+if command -v jq >/dev/null 2>&1; then
+    jq -e . "$SETTINGS_SOURCE" >/dev/null
+elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$SETTINGS_SOURCE"
+else
+    echo "jq or python3 is required to validate $SETTINGS_SOURCE" >&2
+    exit 1
+fi
+
+if [ -f "$SETTINGS_PATH" ] && cmp -s "$SETTINGS_SOURCE" "$SETTINGS_PATH"; then
+    step "Claudex settings already current: $SETTINGS_PATH"
+else
+    if [ -f "$SETTINGS_PATH" ]; then
+        SETTINGS_BACKUP="$PROXY_DIR/archive/$(date -u +%Y%m%d-%H%M%S)-$$-claudex-settings"
+        mkdir -p "$SETTINGS_BACKUP"
+        cp "$SETTINGS_PATH" "$SETTINGS_BACKUP/claudex.settings.json"
+        step "backed up previous Claudex settings -> $SETTINGS_BACKUP/claudex.settings.json"
+    fi
+    install -m 0644 "$SETTINGS_SOURCE" "$SETTINGS_PATH"
+    step "installed Claudex settings -> $SETTINGS_PATH"
+fi
+
+# --- 5. shell function ------------------------------------------------------
 if [ "$SKIP_PROFILE" -eq 0 ]; then
     # Copy the function next to the config and source it, so re-running the
     # installer upgrades the function without rewriting ~/.bashrc.
@@ -142,7 +168,7 @@ if [ "$SKIP_PROFILE" -eq 0 ]; then
     fi
 fi
 
-# --- 5. systemd (optional) --------------------------------------------------
+# --- 6. systemd (optional) --------------------------------------------------
 if [ "$WANT_SYSTEMD" -eq 1 ]; then
     UNIT_DIR="$HOME/.config/systemd/user"
     mkdir -p "$UNIT_DIR"
@@ -172,7 +198,7 @@ EOF
     fi
 fi
 
-# --- 6. start proxy ---------------------------------------------------------
+# --- 7. start proxy ---------------------------------------------------------
 # `setsid --fork` detaches into a new session and returns immediately. A plain
 # `nohup ... &` leaves the daemon as a child of this script, so bash blocks in
 # wait() at exit and the installer never returns even though it finished.
@@ -186,7 +212,7 @@ else
     step "proxy already running (restart to pick up config changes: pkill -x cli-proxy-api; then re-run install.sh)"
 fi
 
-# --- 7. Codex OAuth ---------------------------------------------------------
+# --- 8. Codex OAuth ---------------------------------------------------------
 mkdir -p "$AUTH_DIR"
 if compgen -G "$AUTH_DIR/codex-*.json" >/dev/null; then
     step "Codex credential already present"
@@ -203,7 +229,7 @@ else
         || warn "device login did not complete - re-run: $BIN -config $CONF_PATH -codex-device-login"
 fi
 
-# --- 8. smoke test ----------------------------------------------------------
+# --- 9. smoke test ----------------------------------------------------------
 if [ -n "$CLAUDE_BIN" ] && compgen -G "$AUTH_DIR/codex-*.json" >/dev/null; then
     step "smoke test (flagship + fast tier)..."
     key="$(tr -d '[:space:]' <"$KEY_PATH")"

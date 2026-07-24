@@ -35,14 +35,44 @@ check "$([ -f "$CONF" ] && echo 1 || echo 0)" "config file" "$CONF"
 if [ -f "$CONF" ]; then
     check "$(grep -q 'alias:[[:space:]]*"claude-opus-4-8"' "$CONF" && echo 1 || echo 0)" \
           "config: opus alias" "claude-opus-4-8 -> gpt-5.6-sol"
+    check "$(grep -q 'alias:[[:space:]]*"claude-sonnet-5"' "$CONF" && echo 1 || echo 0)" \
+          "config: sonnet alias" "claude-sonnet-5 -> gpt-5.6-terra"
     check "$(grep -q 'alias:[[:space:]]*"claude-haiku-4-5"' "$CONF" && echo 1 || echo 0)" \
           "config: haiku alias" "claude-haiku-4-5 -> gpt-5.3-codex-spark"
-    grep -q 'alias:[[:space:]]*"claude-sonnet-5"' "$CONF" && \
-        warns "config: sonnet-5 alias" "claude-sonnet-5 is native_1m in Claude Code -> 1M budget vs ~258k upstream. Covered by CLAUDE_CODE_AUTO_COMPACT_WINDOW; drop the alias if subagents overflow."
     grep -qE 'debug:[[:space:]]*true|request-log:[[:space:]]*true' "$CONF" && \
         warns "config: debug logging" "request/debug logging is ON - payload logs accumulate in $AUTH_DIR/logs"
     grep -q 'disable-image-generation' "$CONF" || \
         warns "config: image generation" "unset - an unrequested image_generation tool is appended to every request (perturbs the stable tool array prompt-cache prefix matching needs)"
+    if grep -q 'name:[[:space:]]*"gpt-5.6-\*"' "$CONF" && grep -q '"reasoning.effort":[[:space:]]*"max"' "$CONF"; then
+        warns "config: role effort" "legacy gpt-5.6-* maximum override is active - classifiers and Terra subagents cannot use lower effort"
+    else
+        ok "config: role effort" "per-request effort reaches classifiers and subagents"
+    fi
+fi
+
+# 2b. Claudex-only policy and routing settings
+SETTINGS="$PROXY_DIR/claudex.settings.json"
+check "$([ -f "$SETTINGS" ] && echo 1 || echo 0)" "Claudex settings file" "$SETTINGS"
+SETTINGS_VALID=0
+if [ -f "$SETTINGS" ]; then
+    if command -v jq >/dev/null 2>&1; then
+        jq -e . "$SETTINGS" >/dev/null 2>&1 && SETTINGS_VALID=1
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$SETTINGS" 2>/dev/null && SETTINGS_VALID=1
+    else
+        warns "Claudex settings JSON" "jq or python3 is required for validation"
+    fi
+    check "$SETTINGS_VALID" "Claudex settings JSON" "valid JSON"
+fi
+if [ "$SETTINGS_VALID" = "1" ]; then
+    check "$(grep -q '"Agent"' "$SETTINGS" && echo 1 || echo 0)" "policy: Agent allowed" "static allow avoids classifier startup"
+    check "$(grep -q 'PowerShell(Get-ChildItem \*)' "$SETTINGS" && echo 1 || echo 0)" "policy: PowerShell inspection" "dedicated tool parity"
+    check "$(grep -q 'Bash(rm \*)' "$SETTINGS" && grep -q 'PowerShell(Remove-Item \*)' "$SETTINGS" && echo 1 || echo 0)" "policy: deletion denied" "Bash and PowerShell"
+    check "$(grep -q 'Bash(git push \*)' "$SETTINGS" && grep -q 'PowerShell(git push \*)' "$SETTINGS" && echo 1 || echo 0)" "policy: push asks" "human checkpoint"
+    DEFAULT_COUNT="$(grep -c '"\$defaults"' "$SETTINGS" || true)"
+    check "$([ "$DEFAULT_COUNT" -ge 2 ] && echo 1 || echo 0)" "policy: auto defaults" "allow and environment"
+    CODEX_COUNT="$(grep -c '"codex-.*":[[:space:]]*"user-invocable-only"' "$SETTINGS" || true)"
+    check "$([ "$CODEX_COUNT" -eq 8 ] && echo 1 || echo 0)" "routing: Codex-only skills" "$CODEX_COUNT/8 hidden from automatic routing"
 fi
 
 # 3. proxy process + port + AGE
@@ -80,7 +110,7 @@ if [ "$PORT_OK" = "1" ] && [ -f "$PROXY_DIR/.proxykey" ]; then
     KEY="$(tr -d '[:space:]' <"$PROXY_DIR/.proxykey")"
     MODELS="$(curl -fsS -m 10 -H "Authorization: Bearer $KEY" http://127.0.0.1:8317/v1/models 2>/dev/null || true)"
     check "$([ -n "$MODELS" ] && echo 1 || echo 0)" "proxy /v1/models" "$([ -n "$MODELS" ] && echo "responded" || echo "no response")"
-    for m in claude-opus-4-8 claude-haiku-4-5; do
+    for m in claude-opus-4-8 claude-sonnet-5 claude-haiku-4-5; do
         check "$(printf '%s' "$MODELS" | grep -q "\"$m\"" && echo 1 || echo 0)" "alias live: $m"
     done
 fi
@@ -99,6 +129,12 @@ fi
 # 6. shell function
 check "$(grep -qF '# >>> claudex >>>' "$HOME/.bashrc" "$HOME/.zshrc" 2>/dev/null && echo 1 || echo 0)" \
       "shell function installed" "marker block in ~/.bashrc or ~/.zshrc"
+FN="$PROXY_DIR/claudex-function.sh"
+if [ -f "$FN" ]; then
+    check "$(grep -q -- '--settings "$settings_path"' "$FN" && echo 1 || echo 0)" "function: settings wired" "$SETTINGS"
+    check "$(grep -q -- '--permission-mode acceptEdits' "$FN" && echo 1 || echo 0)" "function: default permission" "acceptEdits"
+    check "$(grep -q -- '-Auto|--auto' "$FN" && echo 1 || echo 0)" "function: explicit auto" "--auto"
+fi
 
 # 6b. no claudex env vars leaked into this shell.
 # claudex scopes them to the child via env(1), so they must never be set here.
@@ -127,6 +163,30 @@ if [ -f "$FN" ]; then
     # GPT-5.6-sol 5-12%, so a thin buffer lands the compaction request over ~258k.
     check "$([ -n "$win" ] && [ "$win" -le 210000 ] && echo 1 || echo 0)" \
           "context window headroom" "AUTO_COMPACT_WINDOW must be <=210000: ~258k ceiling minus tokenizer skew + one fat tool result"
+fi
+
+# 7b. recent proxy failures, metadata only. Request-body sections are skipped.
+RECENT_FILES=0; ERROR_500=0; ERROR_502=0; ERROR_503=0; AUTH_UNAVAILABLE=0; CONTEXT_CANCELED=0
+while IFS= read -r -d '' file; do
+    RECENT_FILES=$((RECENT_FILES+1))
+    SKIP_BODY=0
+    while IFS= read -r line; do
+        [[ "$line" =~ ^---.*REQUEST[[:space:]]BODY.*---$ ]] && { SKIP_BODY=1; continue; }
+        [[ "$line" =~ ^---.*RESPONSE.*---$ ]] && { SKIP_BODY=0; continue; }
+        [ "$SKIP_BODY" -eq 1 ] && continue
+        [ "${#line}" -gt 4096 ] && continue
+        lower="${line,,}"
+        [[ "$lower" =~ ^status([[:space:]]code)?:[[:space:]]*500([^0-9]|$)|http[[:space:]]+500([^0-9]|$) ]] && ERROR_500=$((ERROR_500+1))
+        [[ "$lower" =~ ^status([[:space:]]code)?:[[:space:]]*502([^0-9]|$)|http[[:space:]]+502([^0-9]|$) ]] && ERROR_502=$((ERROR_502+1))
+        [[ "$lower" =~ ^status([[:space:]]code)?:[[:space:]]*503([^0-9]|$)|http[[:space:]]+503([^0-9]|$) ]] && ERROR_503=$((ERROR_503+1))
+        [[ "$lower" == *auth_unavailable* || "$lower" == *"no auth available"* ]] && AUTH_UNAVAILABLE=$((AUTH_UNAVAILABLE+1))
+        [[ "$lower" == *"context canceled"* ]] && CONTEXT_CANCELED=$((CONTEXT_CANCELED+1))
+    done <"$file"
+done < <(find "$AUTH_DIR/logs" -maxdepth 1 -type f -name 'error-v1-messages-*.log' -mmin -1440 -print0 2>/dev/null)
+if [ "$RECENT_FILES" -gt 0 ]; then
+    warns "proxy errors (24h)" "files=$RECENT_FILES HTTP500=$ERROR_500 HTTP502=$ERROR_502 HTTP503=$ERROR_503 auth_unavailable=$AUTH_UNAVAILABLE context_canceled=$CONTEXT_CANCELED"
+else
+    ok "proxy errors (24h)" "none"
 fi
 
 # 8. optional live smoke

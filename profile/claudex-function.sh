@@ -5,8 +5,8 @@
 # tool schemas, and ALL skill descriptions for model IDs it does not recognize
 # (exact registry match, not a "claude-" prefix check). The proxy's
 # oauth-model-alias maps them to real upstreams:
-#   claude-opus-4-8  -> gpt-5.6-sol         (flagship, max effort)
-#   claude-sonnet-5  -> gpt-5.6-terra       (mid tier, max effort)
+#   claude-opus-4-8  -> gpt-5.6-sol         (flagship, max effort via --effort max)
+#   claude-sonnet-5  -> gpt-5.6-terra       (mid tier, passthrough effort under P1)
 #   claude-haiku-4-5 -> gpt-5.3-codex-spark (fast tier)
 #
 # CLAUDE_CODE_SUBAGENT_MODEL must stay UNSET: it overrides per-agent model
@@ -14,10 +14,29 @@
 claudex() {
     local proxy_dir="$HOME/.cliproxyapi"
     local key_path="$proxy_dir/.proxykey"
+    local settings_path="$proxy_dir/claudex.settings.json"
     local bin conf key
 
     if [ ! -f "$key_path" ]; then
         echo "claudex: proxy key not found at $key_path (run install.sh first)" >&2
+        return 1
+    fi
+    if [ ! -f "$settings_path" ]; then
+        echo "claudex: settings not found at $settings_path (re-run install.sh)" >&2
+        return 1
+    fi
+    if command -v jq >/dev/null 2>&1; then
+        jq -e . "$settings_path" >/dev/null 2>&1 || {
+            echo "claudex: invalid settings JSON at $settings_path (re-run install.sh)" >&2
+            return 1
+        }
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$settings_path" 2>/dev/null || {
+            echo "claudex: invalid settings JSON at $settings_path (re-run install.sh)" >&2
+            return 1
+        }
+    else
+        echo "claudex: jq or python3 is required to validate $settings_path" >&2
         return 1
     fi
 
@@ -43,18 +62,38 @@ claudex() {
 
     # Force the permission mode on the command line. Under API-token auth
     # (ANTHROPIC_AUTH_TOKEN) Claude Code does not honor settings.json
-    # `defaultMode`, so a claudex session would otherwise start read-only.
-    # auto also covers every Task/Agent subagent: a parent in auto forces
-    # subagents to inherit auto and ignores any permissionMode in their
-    # frontmatter, so no separate subagent-permission handling is needed.
-    local extra=(--permission-mode auto)
-    if [ "$1" = "-Yolo" ] || [ "$1" = "--yolo" ]; then
-        extra=(--dangerously-skip-permissions)
-        shift
+    # `defaultMode`, so the CLI flag remains the source of truth.
+    # acceptEdits removes routine classifier round trips while explicit
+    # deny/ask rules in the Claudex settings remain authoritative.
+    local want_auto=0 want_yolo=0
+    local forwarded=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -Auto|--auto) want_auto=1; shift ;;
+            -Yolo|--yolo) want_yolo=1; shift ;;
+            --) shift; forwarded+=("$@"); break ;;
+            *) forwarded+=("$1"); shift ;;
+        esac
+    done
+    if [ "$want_auto" -eq 1 ] && [ "$want_yolo" -eq 1 ]; then
+        echo "claudex: --auto and --yolo are mutually exclusive" >&2
+        return 1
+    fi
+
+    local extra=(--settings "$settings_path" --permission-mode acceptEdits)
+    if [ "$want_auto" -eq 1 ]; then
+        extra=(--settings "$settings_path" --permission-mode auto)
+    elif [ "$want_yolo" -eq 1 ]; then
+        extra=(--settings "$settings_path" --dangerously-skip-permissions)
     fi
 
     # ponytail: `env` scopes these to the child, so there is no save/restore
     # dance like the PowerShell version needs. Your plain `claude` is untouched.
+    #
+    # Profile P1: the proxy no longer force-maxes the gpt-5.6-* tier, so the
+    # flagship main session sets its own reasoning with --effort max here. Terra
+    # classifier and Spark subagents stay at passthrough effort. A user --effort
+    # in "${forwarded[@]}" wins over this default (it comes later on the line).
     env \
         ANTHROPIC_BASE_URL="http://127.0.0.1:8317" \
         ANTHROPIC_AUTH_TOKEN="$key" \
@@ -62,7 +101,7 @@ claudex() {
         _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1 \
         CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000 \
         MAX_MCP_OUTPUT_TOKENS=25000 \
-        "$bin" --model claude-opus-4-8 "${extra[@]}" "$@"
+        "$bin" --model claude-opus-4-8 --effort max "${extra[@]}" "${forwarded[@]}"
 }
 
 # --- why this env var is set, and why two others were removed ----------------
