@@ -20,8 +20,9 @@ oauth-model-alias:
       fork: true
       force-mapping: true
     # Mid tier: subagents pinned to claude-sonnet-5 (e.g. the loop-engineer
-    # harness planner/checker/prover/shipper) resolve to gpt-5.6-terra. Also runs
-    # max effort via the gpt-5.6-* override below (no distinct GPT "sonnet" tier).
+    # harness planner/checker/prover/shipper) resolve to gpt-5.6-terra. Runs at
+    # passthrough effort under P1 (no wildcard gpt-5.6-* max override); the main
+    # flagship session gets max effort via the launcher's --effort max flag.
     - name: "gpt-5.6-terra"
       alias: "claude-sonnet-5"
       fork: true
