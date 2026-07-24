@@ -10,8 +10,10 @@
 # Usage: powershell -ExecutionPolicy Bypass -File test\test-orchestration.ps1
 
 $ErrorActionPreference = "Continue"
+$repoRoot = Split-Path $PSScriptRoot -Parent
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$runDir = Join-Path (Split-Path $PSScriptRoot -Parent) "test-output\$stamp"
+$runDir = Join-Path $repoRoot "test-output\$stamp"
+$settingsPath = Join-Path $repoRoot "config\claudex.settings.json"
 $fixDir = "$runDir\fixtures"
 $outDir = "$runDir\artifacts"
 New-Item -ItemType Directory -Force $fixDir, $outDir | Out-Null
@@ -28,8 +30,6 @@ $proxyKey = (Get-Content "$env:USERPROFILE\.cliproxyapi\.proxykey" -Raw).Trim()
 $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8317"
 $env:ANTHROPIC_AUTH_TOKEN = $proxyKey
 $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "claude-haiku-4-5"
-$env:CLAUDE_CODE_ALWAYS_ENABLE_EFFORT = "1"
-$env:CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY = "3"
 $env:_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL = "1"
 
 $claudeBin = $null
@@ -67,7 +67,7 @@ Final reply: the single word DONE if all four files were written, otherwise FAIL
 
 Push-Location $runDir
 Write-Host ">> launching claudex orchestration run (this takes a few minutes)..." -ForegroundColor Cyan
-$json = & $claudeBin --model claude-opus-4-8 -p $prompt --output-format json 2>$null | Out-String
+$json = & $claudeBin --model claude-opus-4-8 --settings $settingsPath --permission-mode acceptEdits -p $prompt --output-format json 2>$null | Out-String
 Pop-Location
 
 $result = $null

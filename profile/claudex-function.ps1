@@ -4,18 +4,38 @@
 # tool schemas, and ALL skill descriptions for model IDs it does not recognize
 # (exact registry match, not a "claude-" prefix check). The proxy's
 # oauth-model-alias maps them to real upstreams:
-#   claude-opus-4-8  -> gpt-5.6-sol         (flagship, reasoning effort forced high)
-#   claude-haiku-4-5 -> gpt-5.3-codex-spark (fast tier for haiku-class subagents)
+#   claude-opus-4-8  -> gpt-5.6-sol          (flagship, max effort via --effort max)
+#   claude-sonnet-5  -> gpt-5.6-terra        (mid tier, passthrough effort under P1)
+#   claude-haiku-4-5 -> gpt-5.3-codex-spark  (fast tier for Haiku-class agents)
 #
 # CLAUDE_CODE_SUBAGENT_MODEL must stay UNSET: it overrides per-agent model
 # frontmatter and would force every subagent onto the flagship tier.
 function claudex {
-    param([switch]$Yolo)
+    param(
+        [switch]$Yolo,
+        [switch]$Auto
+    )
+
+    if ($Yolo -and $Auto) {
+        Write-Host "claudex: -Yolo and -Auto are mutually exclusive" -ForegroundColor Red
+        return
+    }
 
     $proxyDir = "$env:USERPROFILE\.cliproxyapi"
     $keyPath = "$proxyDir\.proxykey"
+    $settingsPath = "$proxyDir\claudex.settings.json"
     if (-not (Test-Path $keyPath)) {
         Write-Host "claudex: proxy key not found at $keyPath (run install.ps1 first)" -ForegroundColor Red
+        return
+    }
+    if (-not (Test-Path $settingsPath)) {
+        Write-Host "claudex: settings not found at $settingsPath (re-run install.ps1)" -ForegroundColor Red
+        return
+    }
+    try {
+        Get-Content $settingsPath -Raw | ConvertFrom-Json | Out-Null
+    } catch {
+        Write-Host "claudex: invalid settings JSON at $settingsPath (re-run install.ps1)" -ForegroundColor Red
         return
     }
 
@@ -63,14 +83,19 @@ function claudex {
         $env:MAX_MCP_OUTPUT_TOKENS = "25000"
         # Force the permission mode on the command line. Under API-token auth
         # (ANTHROPIC_AUTH_TOKEN) Claude Code does not honor settings.json
-        # `defaultMode`, so a claudex session would otherwise start read-only.
-        # The CLI flag takes precedence and restores the intended mode.
-        # auto also covers every Task/Agent subagent: a parent in auto forces
-        # subagents to inherit auto and ignores any permissionMode in their
-        # frontmatter, so no separate subagent-permission handling is needed.
-        $extra = @("--permission-mode", "auto")
-        if ($Yolo) { $extra = @("--dangerously-skip-permissions") }
-        & $bin --model claude-opus-4-8 @extra @args
+        # `defaultMode`, so the CLI flag remains the source of truth.
+        # acceptEdits removes routine classifier round trips while explicit
+        # deny/ask rules in the Claudex settings remain authoritative. A parent
+        # in acceptEdits also keeps subagents on the same policy boundary.
+        $extra = @("--settings", $settingsPath, "--permission-mode", "acceptEdits")
+        if ($Auto) { $extra = @("--settings", $settingsPath, "--permission-mode", "auto") }
+        if ($Yolo) { $extra = @("--settings", $settingsPath, "--dangerously-skip-permissions") }
+        # Profile P1: the proxy no longer force-maxes the gpt-5.6-* tier, so the
+        # flagship main session sets its own reasoning here. Terra classifier and
+        # Spark subagents stay at passthrough effort. A user --effort in @args
+        # wins over this default (it comes later on the line).
+        $effort = @("--effort", "max")
+        & $bin --model claude-opus-4-8 @effort @extra @args
     } finally {
         $env:ANTHROPIC_BASE_URL = $origBase
         $env:ANTHROPIC_AUTH_TOKEN = $origToken

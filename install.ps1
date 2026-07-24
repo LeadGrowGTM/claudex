@@ -84,8 +84,8 @@ $confPath = "$proxyDir\cliproxyapi.conf"
 if (Test-Path $confPath) {
     Step "config already exists: $confPath (not overwritten - diff against config\cliproxyapi.conf.template for updates)"
     $confRaw = Get-Content $confPath -Raw
-    if ($confRaw -notmatch 'alias:\s*"claude-opus-4-8"' -or $confRaw -notmatch 'alias:\s*"claude-haiku-4-5"') {
-        Warn "existing config is MISSING the model aliases - claudex will get the trimmed Claude Code harness (skill descriptions drop ~73%, 10k -> 2.7k)."
+    if ($confRaw -notmatch 'alias:\s*"claude-opus-4-8"' -or $confRaw -notmatch 'alias:\s*"claude-sonnet-5"' -or $confRaw -notmatch 'alias:\s*"claude-haiku-4-5"') {
+        Warn "existing config is MISSING one or more model aliases - claudex routing or the full Claude Code harness will fail."
         Warn "merge the oauth-model-alias block from config\cliproxyapi.conf.template, then restart the proxy. Verify with doctor.ps1."
     }
     # An existing config is never overwritten, so upgrades silently skip new
@@ -102,7 +102,31 @@ if (Test-Path $confPath) {
     Step "wrote config -> $confPath"
 }
 
-# --- 4. autostart ----------------------------------------------------------
+# --- 4. Claudex settings ---------------------------------------------------
+$settingsSource = "$repoRoot\config\claudex.settings.json"
+$settingsPath = "$proxyDir\claudex.settings.json"
+$settingsRaw = Get-Content $settingsSource -Raw
+try {
+    $settingsRaw | ConvertFrom-Json | Out-Null
+} catch {
+    throw "invalid Claudex settings JSON: $settingsSource"
+}
+
+if ((Test-Path $settingsPath) -and (Get-Content $settingsPath -Raw) -eq $settingsRaw) {
+    Step "Claudex settings already current: $settingsPath"
+} else {
+    if (Test-Path $settingsPath) {
+        $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $backupDir = "$proxyDir\archive\$stamp-$PID-claudex-settings"
+        New-Item -ItemType Directory -Path $backupDir | Out-Null
+        Copy-Item $settingsPath "$backupDir\claudex.settings.json"
+        Step "backed up previous Claudex settings -> $backupDir\claudex.settings.json"
+    }
+    [System.IO.File]::WriteAllText($settingsPath, $settingsRaw, [System.Text.UTF8Encoding]::new($false))
+    Step "installed Claudex settings -> $settingsPath"
+}
+
+# --- 5. autostart ----------------------------------------------------------
 if (-not $SkipAutostart) {
     $vbs = "$proxyDir\start-hidden.vbs"
     $vbsContent = "CreateObject(""Wscript.Shell"").Run """"""$exe"""" -config """"$confPath"""""", 0, False"
@@ -112,7 +136,7 @@ if (-not $SkipAutostart) {
     Step "autostart registered -> $startup"
 }
 
-# --- 5. PowerShell profile function -----------------------------------------
+# --- 6. PowerShell profile function -----------------------------------------
 if (-not $SkipProfile) {
     $profilePath = $PROFILE.CurrentUserAllHosts
     if (-not $profilePath) { $profilePath = "$env:USERPROFILE\Documents\WindowsPowerShell\profile.ps1" }
@@ -133,7 +157,7 @@ if (-not $SkipProfile) {
     Step "claudex function installed into $profilePath (marker-delimited, re-run to upgrade)"
 }
 
-# --- 6. start proxy ---------------------------------------------------------
+# --- 7. start proxy ---------------------------------------------------------
 if (-not (Get-Process cli-proxy-api -ErrorAction SilentlyContinue)) {
     Start-Process -FilePath $exe -ArgumentList "-config", $confPath -WorkingDirectory $proxyDir -WindowStyle Hidden
     Start-Sleep -Seconds 2
@@ -142,7 +166,7 @@ if (-not (Get-Process cli-proxy-api -ErrorAction SilentlyContinue)) {
     Step "proxy already running (restart it to pick up config changes: Get-Process cli-proxy-api | Stop-Process; then re-run install.ps1)"
 }
 
-# --- 7. Codex OAuth ---------------------------------------------------------
+# --- 8. Codex OAuth ---------------------------------------------------------
 $cred = Get-ChildItem $authDir -Filter "codex-*.json" -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($cred) {
     Step "Codex credential already present: $($cred.Name)"
@@ -153,7 +177,7 @@ if ($cred) {
     & $exe -codex-login
 }
 
-# --- 8. smoke test ----------------------------------------------------------
+# --- 9. smoke test ----------------------------------------------------------
 $claudeBin = $null
 $cmd = Get-Command "claude.exe" -ErrorAction SilentlyContinue
 if ($cmd) { $claudeBin = $cmd.Source }
