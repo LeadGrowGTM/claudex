@@ -156,7 +156,7 @@ powershell -ExecutionPolicy Bypass -File test\test-native-compaction-contract.ps
 
 It checks the exact commit and source remote across both platforms, stable-by-default activation, non-destructive rollback, interrupted-checkout recovery, Go version floors, launcher and doctor guards, documentation, and PowerShell and bash syntax.
 
-Then run the live harness test when Claude Code, the proxy, or model config changes:
+Then run the harness tests when Claude Code, the proxy, or model config changes:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File test\test-performance-policy-contract.ps1
