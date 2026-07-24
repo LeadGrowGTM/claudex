@@ -58,7 +58,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 The installer (idempotent, re-run any time to upgrade or repair):
 1. Validates prereqs (PowerShell version, claude CLI, port 8317)
-2. Downloads the pinned CLIProxyAPI release to `~\.cliproxyapi\`
+2. Downloads the pinned CLIProxyAPI release to `~\.cliproxyapi\`; `-NativeCompaction` also builds the exact experimental commit beside it
 3. Generates a random local proxy key (`~\.cliproxyapi\.proxykey`)
 4. Writes `cliproxyapi.conf` (model aliases, P1 effort passthrough) from the template; if a config already exists it is left alone, but the installer warns loudly when the model aliases are missing from it. An existing config that still carries the legacy P0 wildcard override is flagged by `doctor` with the exact non-secret migration
 5. Validates and installs non-secret `claudex.settings.json`; a changed installed copy is backed up under a unique date-stamped `~\.cliproxyapi\archive\` directory before replacement
@@ -67,7 +67,7 @@ The installer (idempotent, re-run any time to upgrade or repair):
 8. Starts the proxy and runs the interactive Codex OAuth login (browser)
 9. Smoke-tests both model tiers end-to-end
 
-Flags: `-Version <x.y.z>`, `-SkipLogin`, `-SkipAutostart`, `-SkipProfile`.
+Flags: `-Version <x.y.z>`, `-NativeCompaction`, `-StableProxy`, `-SkipLogin`, `-SkipAutostart`, `-SkipProfile`.
 
 ## Install (Linux / WSL2)
 
@@ -78,7 +78,7 @@ git clone https://github.com/LeadGrowGTM/claudex && cd claudex
 ./install.sh                 # add --systemd for a systemd --user unit
 ```
 
-Flags: `--version <x.y.z>`, `--skip-login`, `--skip-profile`, `--systemd`.
+Flags: `--version <x.y.z>`, `--native-compaction`, `--stable-proxy`, `--skip-login`, `--skip-profile`, `--systemd`.
 
 Differences from the Windows path:
 - **Login uses the device-code flow** - prints a URL and a code, no browser or callback port needed. The `-codex-login` browser flow binds `:1455` and its `-oauth-callback-port` flag is broken (the redirect URI is hardcoded), so device login is the default here. To re-run it by hand, `-config` is **required** - the binary otherwise defaults to `$(pwd)/config.yaml` and dies before login:
@@ -106,6 +106,32 @@ Default `claudex` uses `acceptEdits` with a Claudex-only settings file. This avo
 
 The settings file stores policy only. It contains no proxy key, OAuth token, API key, or credential path.
 
+## Experimental OpenAI server compaction
+
+Normal claudex uses Claude Code's local compaction request. CLIProxyAPI's released Claude-to-Codex translator does not bridge that request to OpenAI's `/responses/compact` endpoint. Upstream [PR #4465](https://github.com/router-for-me/CLIProxyAPI/pull/4465) adds the missing bridge, but it remains a draft with merge conflicts and has no released binary. It is therefore opt-in, never the default.
+
+The opt-in build fetches the PR author's [`Johnnybyzhang/CLIProxyAPI`](https://github.com/Johnnybyzhang/CLIProxyAPI) fork and pins its [signed head commit](https://github.com/Johnnybyzhang/CLIProxyAPI/commit/725aa9f1bd61c76edb315ae80c7be6215198621a), `725aa9f1bd61c76edb315ae80c7be6215198621a`. Installers fetch that exact commit, require a clean checkout, require Go 1.26+, build it locally, and keep the official release beside it as the rollback path:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1 -NativeCompaction
+# Return to the official release without deleting source or binaries:
+powershell -ExecutionPolicy Bypass -File install.ps1 -StableProxy
+```
+
+```bash
+./install.sh --native-compaction
+# Return to the official release without deleting source or binaries:
+./install.sh --stable-proxy
+```
+
+Activation uses `~/.cliproxyapi/.native-compaction-enabled`, which contains only the pinned commit SHA. Switching back archives that marker and retains the fork checkout and built binary. The launcher refuses to use a running process from the wrong channel, so restart the proxy after changing channels.
+
+When active, a Claude Code compaction turn sends the retained transcript and compaction instruction to OpenAI `/responses/compact`. The bridge wraps OpenAI's opaque compacted item in a strict Claude-compatible capsule, stores that capsule in the normal local Claude transcript, and binds replay to the Codex credential that created it. Treat the feature as experimental: the patch is large, unmerged, and may change before upstream release. The existing 200k window and 25k MCP-result cap remain in force.
+
+### Choosing a channel
+
+The two features are independent and both survive on this build. The **P1 effort profile** (passthrough effort with a `--effort max` launcher for the flagship tier) is always on - it is the default runtime and needs no opt-in. The **OpenAI server-compaction channel** is the separate opt-in above (`-NativeCompaction` / `--native-compaction`), which swaps the released router-for-me proxy for the pinned Johnnybyzhang fork. Run the stable P1 build for everyday work; enable server compaction only when you specifically want OpenAI-side `/responses/compact` instead of Claude Code's local compaction, and return to stable (`-StableProxy` / `--stable-proxy`) when done.
+
 ## Health check
 
 ```powershell
@@ -118,9 +144,19 @@ powershell -ExecutionPolicy Bypass -File doctor.ps1 -Smoke   # + live calls thro
 ./doctor.sh --smoke    # + live calls through both tiers
 ```
 
-Checks every link: Claude CLI, proxy binary/key/config, all model aliases, Claudex settings JSON and key policy rules, installed launcher mode, legacy wildcard effort override, proxy process and port, live `/v1/models`, Codex credential, context-window pin, environment leakage, and recent proxy 500/502/503, `auth_unavailable`, and `context canceled` metadata. Request bodies are skipped. Exits nonzero on any failed health check.
+Checks every link: Claude CLI, the selected proxy channel (stable router-for-me release or the pinned native-compaction fork), native source pin and cleanliness when that channel is active, proxy binary/key/config, all model aliases, Claudex settings JSON and key policy rules, installed launcher mode, legacy wildcard effort override, running binary/channel match, proxy process and port 8317 ownership, live `/v1/models`, Codex credential, context-window pin, environment leakage, and recent proxy 500/502/503, `auth_unavailable`, and `context canceled` metadata. Request bodies are skipped. Exits nonzero on any failed health check - first thing to run when claudex misbehaves.
 
-## Test the harness
+## Tests
+
+Run the offline native-compaction contract first. It does not start a proxy, read credentials, call the network, run an installer, or build Go source:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File test\test-native-compaction-contract.ps1
+```
+
+It checks the exact commit and source remote across both platforms, stable-by-default activation, non-destructive rollback, interrupted-checkout recovery, Go version floors, launcher and doctor guards, documentation, and PowerShell and bash syntax.
+
+Then run the harness tests when Claude Code, the proxy, or model config changes:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File test\test-performance-policy-contract.ps1
@@ -239,6 +275,7 @@ profile/claudex-function.sh                 bash/zsh launcher source - keep mode
 config/cliproxyapi.conf.template            proxy aliases and current effort profile
 config/claudex.settings.json                non-secret Claudex safety and skill-routing policy
 test/test-performance-policy-contract.ps1   offline policy/install/launcher contract
+test/test-native-compaction-contract.ps1    offline server-compaction channel and syntax contract
 test/test-orchestration.ps1                 live forced-Agent availability regression
 bench/performance-parity.ps1                routine, classifier, organic, and routing benchmark
 bench/set-effort-profile.ps1                non-secret P0/P1/P2 proxy effort switcher

@@ -5,10 +5,12 @@
 #
 # Usage:
 #   ./install.sh
-#   ./install.sh --version 7.2.83   pin a CLIProxyAPI release (default below)
-#   ./install.sh --skip-login       skip the Codex OAuth step
-#   ./install.sh --skip-profile     don't touch ~/.bashrc
-#   ./install.sh --systemd          also install a systemd --user unit
+#   ./install.sh --version 7.2.83     pin a CLIProxyAPI release (default below)
+#   ./install.sh --native-compaction build and activate the pinned Codex bridge
+#   ./install.sh --stable-proxy      return to the official release, retaining bridge files
+#   ./install.sh --skip-login        skip the Codex OAuth step
+#   ./install.sh --skip-profile      don't touch ~/.bashrc
+#   ./install.sh --systemd           also install a systemd --user unit
 #
 # Upstream also ships its own bash installer (router-for-me/cliproxyapi-installer).
 # We don't use it: it installs to ~/cliproxyapi with its own config.yaml and
@@ -18,21 +20,34 @@ set -euo pipefail
 VERSION="7.2.83"   # keep in sync with install.ps1 - a version skew between a
                    # Windows and a Linux proxy is a miserable thing to debug
 SKIP_LOGIN=0; SKIP_PROFILE=0; WANT_SYSTEMD=0
+NATIVE_COMPACTION=0; STABLE_PROXY=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --version) VERSION="$2"; shift 2 ;;
+        --native-compaction) NATIVE_COMPACTION=1; shift ;;
+        --stable-proxy) STABLE_PROXY=1; shift ;;
         --skip-login) SKIP_LOGIN=1; shift ;;
         --skip-profile) SKIP_PROFILE=1; shift ;;
         --systemd) WANT_SYSTEMD=1; shift ;;
         *) echo "unknown flag: $1" >&2; exit 2 ;;
     esac
 done
+if [ "$NATIVE_COMPACTION" -eq 1 ] && [ "$STABLE_PROXY" -eq 1 ]; then
+    echo "--native-compaction and --stable-proxy are mutually exclusive" >&2
+    exit 2
+fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROXY_DIR="$HOME/.cliproxyapi"
 AUTH_DIR="$HOME/.cli-proxy-api"
 MARKER_START="# >>> claudex >>>"
 MARKER_END="# <<< claudex <<<"
+NATIVE_COMPACTION_REPO="https://github.com/Johnnybyzhang/CLIProxyAPI.git"
+NATIVE_COMPACTION_COMMIT="725aa9f1bd61c76edb315ae80c7be6215198621a"
+NATIVE_COMPACTION_DIR="$PROXY_DIR/native-compaction-$NATIVE_COMPACTION_COMMIT"
+NATIVE_COMPACTION_BIN="$NATIVE_COMPACTION_DIR/cli-proxy-api"
+NATIVE_COMPACTION_SOURCE="$PROXY_DIR/sources/CLIProxyAPI-$NATIVE_COMPACTION_COMMIT"
+NATIVE_COMPACTION_MARKER="$PROXY_DIR/.native-compaction-enabled"
 
 step() { printf '\033[36m>> %s\033[0m\n' "$1"; }
 warn() { printf '\033[33m!! %s\033[0m\n' "$1"; }
@@ -67,9 +82,9 @@ fi
 
 # --- 1. proxy binary -------------------------------------------------------
 mkdir -p "$PROXY_DIR"
-BIN="$PROXY_DIR/cli-proxy-api"
-if [ -x "$BIN" ]; then
-    step "binary already present: $BIN (delete it to force re-download)"
+STABLE_BIN="$PROXY_DIR/cli-proxy-api"
+if [ -x "$STABLE_BIN" ]; then
+    step "official binary already present: $STABLE_BIN"
 else
     case "$(uname -m)" in
         x86_64|amd64)  ARCH="amd64" ;;
@@ -81,14 +96,143 @@ else
     ldd --version 2>&1 | grep -qi musl && VARIANT="_no-plugin"
     ASSET="CLIProxyAPI_${VERSION}_linux_${ARCH}${VARIANT}.tar.gz"
     URL="https://github.com/router-for-me/CLIProxyAPI/releases/download/v${VERSION}/${ASSET}"
-    TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+    INSTALL_ARCHIVE="$PROXY_DIR/archive/$(date -u +%Y%m%d-%H%M%S)-$$-official-$VERSION"
+    TMP="$INSTALL_ARCHIVE/extract"
+    mkdir -p "$TMP"
     step "downloading $URL"
-    curl -fsSL "$URL" -o "$TMP/$ASSET"
-    tar -xzf "$TMP/$ASSET" -C "$TMP"        # tarball is flat, no top-level dir
+    curl -fsSL "$URL" -o "$INSTALL_ARCHIVE/$ASSET"
+    tar -xzf "$INSTALL_ARCHIVE/$ASSET" -C "$TMP" # tarball is flat, no top-level dir
     found="$(find "$TMP" -name cli-proxy-api -type f -print -quit)"
     [ -n "$found" ] || { echo "no cli-proxy-api binary inside $ASSET" >&2; exit 1; }
-    install -m 0755 "$found" "$BIN"
-    step "installed binary -> $BIN"
+    install -m 0755 "$found" "$STABLE_BIN"
+    step "installed official binary -> $STABLE_BIN"
+    step "retained installer assets -> $INSTALL_ARCHIVE"
+fi
+
+# The native compaction bridge is an upstream draft, so it is explicit opt-in
+# and built from one immutable, signed commit. The official release stays beside
+# it as the default and rollback path.
+if [ "$NATIVE_COMPACTION" -eq 1 ]; then
+    command -v git >/dev/null || { echo "git is required for --native-compaction" >&2; exit 1; }
+
+    if [ ! -e "$NATIVE_COMPACTION_SOURCE" ]; then
+        mkdir -p "$NATIVE_COMPACTION_SOURCE"
+    fi
+    [ -d "$NATIVE_COMPACTION_SOURCE" ] || {
+        echo "native compaction source path is not a directory: $NATIVE_COMPACTION_SOURCE" >&2
+        exit 1
+    }
+    if [ ! -d "$NATIVE_COMPACTION_SOURCE/.git" ]; then
+        first_source_entry="$(find "$NATIVE_COMPACTION_SOURCE" -mindepth 1 -maxdepth 1 -print -quit)"
+        [ -z "$first_source_entry" ] || {
+            echo "native compaction source exists but is not an empty or valid Git checkout: $NATIVE_COMPACTION_SOURCE" >&2
+            exit 1
+        }
+        git -C "$NATIVE_COMPACTION_SOURCE" init
+    fi
+
+    if native_origin="$(git -C "$NATIVE_COMPACTION_SOURCE" remote get-url origin 2>/dev/null)"; then
+        [ "$native_origin" = "$NATIVE_COMPACTION_REPO" ] || {
+            echo "native compaction source origin must be $NATIVE_COMPACTION_REPO (found '$native_origin')" >&2
+            exit 1
+        }
+    else
+        git -C "$NATIVE_COMPACTION_SOURCE" remote add origin "$NATIVE_COMPACTION_REPO"
+    fi
+
+    if native_head="$(git -C "$NATIVE_COMPACTION_SOURCE" rev-parse --verify HEAD 2>/dev/null)"; then
+        [ "$native_head" = "$NATIVE_COMPACTION_COMMIT" ] || {
+            echo "native compaction source must be exactly $NATIVE_COMPACTION_COMMIT (found '$native_head')" >&2
+            exit 1
+        }
+    else
+        if ! partial_dirty="$(git -C "$NATIVE_COMPACTION_SOURCE" status --porcelain --untracked-files=all)"; then
+            echo "could not inspect incomplete native compaction checkout: $NATIVE_COMPACTION_SOURCE" >&2
+            exit 1
+        fi
+        [ -z "$partial_dirty" ] || {
+            echo "incomplete native compaction checkout is not clean: $NATIVE_COMPACTION_SOURCE" >&2
+            exit 1
+        }
+        git -C "$NATIVE_COMPACTION_SOURCE" fetch --depth 1 origin "$NATIVE_COMPACTION_COMMIT"
+        git -C "$NATIVE_COMPACTION_SOURCE" checkout --detach "$NATIVE_COMPACTION_COMMIT"
+    fi
+
+    native_head="$(git -C "$NATIVE_COMPACTION_SOURCE" rev-parse --verify HEAD)"
+    [ "$native_head" = "$NATIVE_COMPACTION_COMMIT" ] || {
+        echo "native compaction source must be exactly $NATIVE_COMPACTION_COMMIT (found '$native_head')" >&2
+        exit 1
+    }
+    if ! native_dirty="$(git -C "$NATIVE_COMPACTION_SOURCE" status --porcelain --untracked-files=all)"; then
+        echo "could not inspect native compaction checkout: $NATIVE_COMPACTION_SOURCE" >&2
+        exit 1
+    fi
+    [ -z "$native_dirty" ] || {
+        echo "native compaction source is not clean: $NATIVE_COMPACTION_SOURCE" >&2
+        exit 1
+    }
+
+    if [ ! -x "$NATIVE_COMPACTION_BIN" ]; then
+        command -v go >/dev/null || { echo "Go 1.26+ is required to build native compaction" >&2; exit 1; }
+        GO_VERSION="$(go version)"
+        GO_MAJOR="$(printf '%s' "$GO_VERSION" | sed -nE 's/.*go([0-9]+)\.([0-9]+).*/\1/p')"
+        GO_MINOR="$(printf '%s' "$GO_VERSION" | sed -nE 's/.*go([0-9]+)\.([0-9]+).*/\2/p')"
+        [ -n "$GO_MAJOR" ] && [ -n "$GO_MINOR" ] || {
+            echo "could not parse Go version: '$GO_VERSION'" >&2
+            exit 1
+        }
+        if [ "$GO_MAJOR" -lt 1 ] || { [ "$GO_MAJOR" -eq 1 ] && [ "$GO_MINOR" -lt 26 ]; }; then
+            echo "Go 1.26+ is required to build native compaction (found '$GO_VERSION')" >&2
+            exit 1
+        fi
+
+        mkdir -p "$NATIVE_COMPACTION_DIR"
+        BUILDING_BIN="$NATIVE_COMPACTION_BIN.building-$$"
+        [ ! -e "$BUILDING_BIN" ] || { echo "stale build output exists: $BUILDING_BIN" >&2; exit 1; }
+        ( cd "$NATIVE_COMPACTION_SOURCE" && go build -trimpath -o "$BUILDING_BIN" ./cmd/server )
+        chmod 0755 "$BUILDING_BIN"
+        mv "$BUILDING_BIN" "$NATIVE_COMPACTION_BIN"
+        step "built native compaction binary -> $NATIVE_COMPACTION_BIN"
+    else
+        step "native compaction binary already present: $NATIVE_COMPACTION_BIN"
+    fi
+
+    if [ -f "$NATIVE_COMPACTION_MARKER" ]; then
+        marked_commit="$(tr -d '[:space:]' <"$NATIVE_COMPACTION_MARKER")"
+        [ "$marked_commit" = "$NATIVE_COMPACTION_COMMIT" ] || {
+            echo "native compaction marker names an unsupported commit: '$marked_commit'" >&2
+            exit 1
+        }
+    else
+        printf '%s\n' "$NATIVE_COMPACTION_COMMIT" >"$NATIVE_COMPACTION_MARKER"
+        chmod 600 "$NATIVE_COMPACTION_MARKER"
+    fi
+    step "native compaction channel activated at $NATIVE_COMPACTION_COMMIT"
+fi
+
+if [ "$STABLE_PROXY" -eq 1 ] && [ -f "$NATIVE_COMPACTION_MARKER" ]; then
+    ARCHIVE_DIR="$PROXY_DIR/archive"
+    mkdir -p "$ARCHIVE_DIR"
+    ARCHIVED_MARKER="$ARCHIVE_DIR/$(date -u +%Y%m%d-%H%M%S)-$$-native-compaction.enabled"
+    mv "$NATIVE_COMPACTION_MARKER" "$ARCHIVED_MARKER"
+    step "stable channel activated; native marker retained at $ARCHIVED_MARKER"
+fi
+
+BIN="$STABLE_BIN"
+if [ -f "$NATIVE_COMPACTION_MARKER" ]; then
+    marked_commit="$(tr -d '[:space:]' <"$NATIVE_COMPACTION_MARKER")"
+    [ "$marked_commit" = "$NATIVE_COMPACTION_COMMIT" ] || {
+        echo "native compaction marker names an unsupported commit: '$marked_commit'" >&2
+        exit 1
+    }
+    [ -x "$NATIVE_COMPACTION_BIN" ] || {
+        echo "native compaction is active but its binary is missing: $NATIVE_COMPACTION_BIN" >&2
+        exit 1
+    }
+    BIN="$NATIVE_COMPACTION_BIN"
+    step "proxy channel: native compaction ($NATIVE_COMPACTION_COMMIT)"
+else
+    step "proxy channel: official release v$VERSION"
 fi
 
 # --- 2. proxy key ----------------------------------------------------------

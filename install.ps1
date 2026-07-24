@@ -5,12 +5,16 @@
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File install.ps1
 #   ... -Version 7.2.83     pin a CLIProxyAPI release (default below)
+#   ... -NativeCompaction   build and activate the pinned Codex compaction bridge
+#   ... -StableProxy        return to the official release without deleting the bridge
 #   ... -SkipLogin          skip the interactive Codex OAuth step
 #   ... -SkipAutostart      don't register the Startup-folder launcher
 #   ... -SkipProfile        don't touch the PowerShell profile
 
 param(
     [string]$Version = "7.2.83",
+    [switch]$NativeCompaction,
+    [switch]$StableProxy,
     [switch]$SkipLogin,
     [switch]$SkipAutostart,
     [switch]$SkipProfile
@@ -22,9 +26,33 @@ $proxyDir = "$env:USERPROFILE\.cliproxyapi"
 $authDir  = "$env:USERPROFILE\.cli-proxy-api"
 $markerStart = "# >>> claudex >>>"
 $markerEnd   = "# <<< claudex <<<"
+$nativeCompactionRepo = "https://github.com/Johnnybyzhang/CLIProxyAPI.git"
+$nativeCompactionCommit = "725aa9f1bd61c76edb315ae80c7be6215198621a"
+$nativeCompactionDir = "$proxyDir\native-compaction-$nativeCompactionCommit"
+$nativeCompactionExe = "$nativeCompactionDir\cli-proxy-api.exe"
+$nativeCompactionSource = "$proxyDir\sources\CLIProxyAPI-$nativeCompactionCommit"
+$nativeCompactionMarker = "$proxyDir\.native-compaction-enabled"
 
 function Step($msg) { Write-Host ">> $msg" -ForegroundColor Cyan }
 function Warn($msg) { Write-Host "!! $msg" -ForegroundColor Yellow }
+function Invoke-NativeExitCode($filePath, [string[]]$argumentList) {
+    # Windows PowerShell 5.1 turns native stderr into ErrorRecords. Git writes
+    # normal progress there, so EAP=Stop would abort successful fetches.
+    $savedErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $nativeOutput = & $filePath @argumentList 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+    }
+    $nativeOutput | ForEach-Object { Write-Host "$_" }
+    return [int]$exitCode
+}
+
+if ($NativeCompaction -and $StableProxy) {
+    throw "-NativeCompaction and -StableProxy are mutually exclusive"
+}
 
 # --- 0. prereq checks -------------------------------------------------------
 if ($PSVersionTable.PSVersion.Major -lt 5) { throw "PowerShell 5.1+ required (found $($PSVersionTable.PSVersion))" }
@@ -47,23 +75,168 @@ if ($portConn) {
 
 # --- 1. proxy binary -------------------------------------------------------
 New-Item -ItemType Directory -Force $proxyDir | Out-Null
-$exe = "$proxyDir\cli-proxy-api.exe"
-if (Test-Path $exe) {
-    Step "binary already present: $exe (delete it to force re-download)"
+$stableExe = "$proxyDir\cli-proxy-api.exe"
+if (Test-Path $stableExe) {
+    Step "official binary already present: $stableExe"
 } else {
     $asset = "CLIProxyAPI_${Version}_windows_amd64.zip"
     $url = "https://github.com/router-for-me/CLIProxyAPI/releases/download/v$Version/$asset"
-    $zip = "$env:TEMP\$asset"
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $downloadArchive = "$proxyDir\archive\$stamp-$PID-official-$Version"
+    New-Item -ItemType Directory -Force (Split-Path $downloadArchive -Parent) | Out-Null
+    New-Item -ItemType Directory $downloadArchive | Out-Null
+    $zip = "$downloadArchive\$asset"
     Step "downloading $url"
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
-    $extract = "$env:TEMP\claudex-extract-$Version"
-    if (Test-Path $extract) { Remove-Item $extract -Recurse -Force }
+    $extract = "$downloadArchive\extract"
     Expand-Archive -Path $zip -DestinationPath $extract
     $found = Get-ChildItem $extract -Recurse -Filter "*.exe" | Select-Object -First 1
     if (-not $found) { throw "no .exe found inside $asset" }
-    Copy-Item $found.FullName $exe
-    Step "installed binary -> $exe"
+    Copy-Item $found.FullName $stableExe
+    Step "installed official binary -> $stableExe"
+    Step "retained installer assets -> $downloadArchive"
+}
+
+# The native compaction bridge is an upstream draft, so it is explicit opt-in
+# and built from one immutable, signed commit. The official release stays beside
+# it as the default and rollback path.
+if ($NativeCompaction) {
+    $git = Get-Command "git" -ErrorAction SilentlyContinue
+    if (-not $git) { throw "git is required for -NativeCompaction" }
+
+    if (-not (Test-Path $nativeCompactionSource)) {
+        New-Item -ItemType Directory -Force (Split-Path $nativeCompactionSource -Parent) | Out-Null
+        New-Item -ItemType Directory $nativeCompactionSource | Out-Null
+    }
+    if (-not (Test-Path $nativeCompactionSource -PathType Container)) {
+        throw "native compaction source path is not a directory: $nativeCompactionSource"
+    }
+    if (-not (Test-Path "$nativeCompactionSource\.git")) {
+        $sourceItems = @(Get-ChildItem $nativeCompactionSource -Force)
+        if ($sourceItems.Count -gt 0) {
+            throw "native compaction source exists but is not an empty or valid Git checkout: $nativeCompactionSource"
+        }
+        $gitExit = Invoke-NativeExitCode $git.Source @("-C", $nativeCompactionSource, "init")
+        if ($gitExit -ne 0) { throw "git init failed for $nativeCompactionSource" }
+    }
+
+    # `remote get-url origin` on a freshly-init'd repo (no remote yet) writes to
+    # stderr and exits nonzero. Under EAP=Stop, PS5.1 turns that native stderr
+    # into a terminating error before the else-branch runs, so probe with
+    # EAP=Continue and read the exit code explicitly.
+    $savedEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $nativeOrigin = (& $git.Source -C $nativeCompactionSource remote get-url origin 2>$null | Out-String).Trim()
+        $hasNativeOrigin = ($LASTEXITCODE -eq 0 -and [bool]$nativeOrigin)
+    } finally {
+        $ErrorActionPreference = $savedEap
+    }
+    if ($hasNativeOrigin) {
+        if ($nativeOrigin -ne $nativeCompactionRepo) {
+            throw "native compaction source origin must be $nativeCompactionRepo (found '$nativeOrigin')"
+        }
+    } else {
+        $gitExit = Invoke-NativeExitCode $git.Source @("-C", $nativeCompactionSource, "remote", "add", "origin", $nativeCompactionRepo)
+        if ($gitExit -ne 0) { throw "git remote add failed for $nativeCompactionSource" }
+    }
+
+    # `rev-parse --verify HEAD` before the first commit writes to stderr and exits
+    # nonzero; same EAP=Stop hazard as the origin probe above.
+    $savedEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $nativeHead = (& $git.Source -C $nativeCompactionSource rev-parse --verify HEAD 2>$null | Out-String).Trim()
+        $hasNativeHead = ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $savedEap
+    }
+    if ($hasNativeHead -and $nativeHead -ne $nativeCompactionCommit) {
+        throw "native compaction source must be exactly $nativeCompactionCommit (found '$nativeHead')"
+    }
+    if (-not $hasNativeHead) {
+        $partialDirty = (& $git.Source -C $nativeCompactionSource status --porcelain --untracked-files=all | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or $partialDirty) {
+            throw "incomplete native compaction checkout is not clean: $nativeCompactionSource"
+        }
+        $gitExit = Invoke-NativeExitCode $git.Source @("-C", $nativeCompactionSource, "fetch", "--depth", "1", "origin", $nativeCompactionCommit)
+        if ($gitExit -ne 0) { throw "git fetch failed for native compaction commit $nativeCompactionCommit" }
+        $gitExit = Invoke-NativeExitCode $git.Source @("-C", $nativeCompactionSource, "checkout", "--detach", $nativeCompactionCommit)
+        if ($gitExit -ne 0) { throw "git checkout failed for native compaction commit $nativeCompactionCommit" }
+    }
+
+    $nativeHead = (& $git.Source -C $nativeCompactionSource rev-parse --verify HEAD | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $nativeHead -ne $nativeCompactionCommit) {
+        throw "native compaction source must be exactly $nativeCompactionCommit (found '$nativeHead')"
+    }
+    $nativeDirty = (& $git.Source -C $nativeCompactionSource status --porcelain --untracked-files=all | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $nativeDirty) {
+        throw "native compaction source is not clean: $nativeCompactionSource"
+    }
+
+    if (-not (Test-Path $nativeCompactionExe)) {
+        $go = Get-Command "go" -ErrorAction SilentlyContinue
+        if (-not $go) { throw "Go 1.26+ is required to build native compaction" }
+        $goVersion = (& $go.Source version | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or $goVersion -notmatch 'go(\d+)\.(\d+)') {
+            throw "could not parse Go version: '$goVersion'"
+        }
+        $goMajor = [int]$Matches[1]
+        $goMinor = [int]$Matches[2]
+        if ($goMajor -lt 1 -or ($goMajor -eq 1 -and $goMinor -lt 26)) {
+            throw "Go 1.26+ is required to build native compaction (found '$goVersion')"
+        }
+
+        New-Item -ItemType Directory -Force $nativeCompactionDir | Out-Null
+        $buildingExe = "$nativeCompactionExe.building-$PID"
+        if (Test-Path $buildingExe) { throw "stale build output exists: $buildingExe" }
+        Push-Location $nativeCompactionSource
+        try {
+            $goExit = Invoke-NativeExitCode $go.Source @("build", "-trimpath", "-o", $buildingExe, "./cmd/server")
+            if ($goExit -ne 0) { throw "native compaction build failed" }
+        } finally {
+            Pop-Location
+        }
+        Move-Item $buildingExe $nativeCompactionExe
+        Step "built native compaction binary -> $nativeCompactionExe"
+    } else {
+        Step "native compaction binary already present: $nativeCompactionExe"
+    }
+
+    if (Test-Path $nativeCompactionMarker) {
+        $markedCommit = (Get-Content $nativeCompactionMarker -Raw).Trim()
+        if ($markedCommit -ne $nativeCompactionCommit) {
+            throw "native compaction marker names an unsupported commit: '$markedCommit'"
+        }
+    } else {
+        [System.IO.File]::WriteAllText($nativeCompactionMarker, "$nativeCompactionCommit`n", [System.Text.UTF8Encoding]::new($false))
+    }
+    Step "native compaction channel activated at $nativeCompactionCommit"
+}
+
+if ($StableProxy -and (Test-Path $nativeCompactionMarker)) {
+    $archiveDir = "$proxyDir\archive"
+    New-Item -ItemType Directory -Force $archiveDir | Out-Null
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $archivedMarker = "$archiveDir\$stamp-$PID-native-compaction.enabled"
+    Move-Item $nativeCompactionMarker $archivedMarker
+    Step "stable channel activated; native marker retained at $archivedMarker"
+}
+
+$exe = $stableExe
+if (Test-Path $nativeCompactionMarker) {
+    $markedCommit = (Get-Content $nativeCompactionMarker -Raw).Trim()
+    if ($markedCommit -ne $nativeCompactionCommit) {
+        throw "native compaction marker names an unsupported commit: '$markedCommit'"
+    }
+    if (-not (Test-Path $nativeCompactionExe)) {
+        throw "native compaction is active but its binary is missing: $nativeCompactionExe"
+    }
+    $exe = $nativeCompactionExe
+    Step "proxy channel: native compaction ($nativeCompactionCommit)"
+} else {
+    Step "proxy channel: official release v$Version"
 }
 
 # --- 2. proxy key ----------------------------------------------------------
