@@ -251,6 +251,9 @@ Check "routine gate rejects permission failures" (($benchmark -match '\$pass = \
 $organicPromptMatch = [regex]::Match($benchmark, '(?s)organic\s*=\s*@\{.*?Prompt\s*=\s*\{(?<body>.*?)\}\s*Score\s*=')
 $organicPrompt = if ($organicPromptMatch.Success) { $organicPromptMatch.Groups['body'].Value } else { "" }
 Check "organic prompt has no delegation hint" (($organicPrompt -match 'Three independent modules under \$workdir') -and ($organicPrompt -notmatch '(?i)\bAgent\b|subagent|parallel')) "outcome-only organic fixture"
+$organic6PromptMatch = [regex]::Match($benchmark, '(?s)organic6\s*=\s*@\{.*?Prompt\s*=\s*\{(?<body>.*?)\}\s*Score\s*=')
+$organic6Prompt = if ($organic6PromptMatch.Success) { $organic6PromptMatch.Groups['body'].Value } else { "" }
+Check "organic6 prompt has no delegation hint" (($organic6Prompt -match 'Six independent modules under \$workdir') -and ($organic6Prompt -notmatch '(?i)\bAgent\b|subagent|parallel')) "outcome-only heavier organic fixture"
 Check "routing regression omits model" ($benchmark -match 'Do not provide the Agent model parameter') "tool-runner frontmatter test"
 Check "benchmark tracks parallel Agent calls" ($benchmark -match 'maxParallelAgentCalls') "message-id grouping"
 Check "benchmark separates mandatory search delegation" (($benchmark -match 'nonSearcherAgentCallCount') -and ($benchmark -match '\$agentType -ne "smart-searcher"')) "organic evidence excludes required smart-searcher"

@@ -15,7 +15,7 @@ param(
     [switch]$Live,
     [ValidateSet("claudex-auto", "claudex-policy", "claudex-policy-auto", "native-policy")]
     [string[]]$Variants = @("claudex-policy"),
-    [ValidateSet("routine", "classifier", "organic", "routing")]
+    [ValidateSet("routine", "classifier", "organic", "organic6", "routing")]
     [string[]]$Scenarios = @("routine", "classifier", "organic", "routing"),
     [ValidateSet("P0", "P1", "P2")]
     [string]$Profile = "P0",
@@ -395,6 +395,118 @@ console.log("gamma-ok");
             return @{
                 pass = $correct -and $noDuplicate
                 detail = "tests=$alpha/$beta/$gamma anyAgent=$anyAgent nonSearcherAgent=$nonSearcherAgent parallel=$parallel noDuplicate=$noDuplicate duplicateWrites=$($stats.duplicateWriteCount)"
+            }
+        }
+    }
+    organic6 = @{
+        # Heavier organic fixture: six unrelated, from-scratch implementations,
+        # each with its own failing test. The extra breadth and per-module work
+        # raise the incentive to fan out, testing whether native Claude Code
+        # organically delegates when the task is genuinely large - the three-
+        # module organic fixture is small enough that native does it inline.
+        Setup = {
+            param($workdir)
+            Write-Utf8NoBom "$workdir\CLAUDE.md" "# Fixture rules`r`n`r`n- Do not edit test files.`r`n- Run every test before reporting completion.`r`n"
+            $mods = "slug", "chunk", "roman", "wordcount", "query", "hex"
+            New-Item -ItemType Directory -Path ($mods | ForEach-Object { "$workdir\$_" }) | Out-Null
+            Write-Utf8NoBom "$workdir\slug\impl.js" @'
+function slugify(input) {
+  throw new Error("not implemented");
+}
+module.exports = { slugify };
+'@
+            Write-Utf8NoBom "$workdir\slug\test.js" @'
+const assert = require("assert");
+const { slugify } = require("./impl");
+assert.strictEqual(slugify("  Hello, World!  "), "hello-world");
+assert.strictEqual(slugify("Foo -- Bar__baz"), "foo-bar-baz");
+console.log("slug-ok");
+'@
+            Write-Utf8NoBom "$workdir\chunk\impl.js" @'
+function chunk(values, size) {
+  throw new Error("not implemented");
+}
+module.exports = { chunk };
+'@
+            Write-Utf8NoBom "$workdir\chunk\test.js" @'
+const assert = require("assert");
+const { chunk } = require("./impl");
+assert.deepStrictEqual(chunk([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+assert.deepStrictEqual(chunk([], 3), []);
+console.log("chunk-ok");
+'@
+            Write-Utf8NoBom "$workdir\roman\impl.js" @'
+function toRoman(value) {
+  throw new Error("not implemented");
+}
+module.exports = { toRoman };
+'@
+            Write-Utf8NoBom "$workdir\roman\test.js" @'
+const assert = require("assert");
+const { toRoman } = require("./impl");
+assert.strictEqual(toRoman(1994), "MCMXCIV");
+assert.strictEqual(toRoman(4), "IV");
+console.log("roman-ok");
+'@
+            Write-Utf8NoBom "$workdir\wordcount\impl.js" @'
+function wordCount(text) {
+  throw new Error("not implemented");
+}
+module.exports = { wordCount };
+'@
+            Write-Utf8NoBom "$workdir\wordcount\test.js" @'
+const assert = require("assert");
+const { wordCount } = require("./impl");
+assert.deepStrictEqual(wordCount("a A b"), { a: 2, b: 1 });
+console.log("wordcount-ok");
+'@
+            Write-Utf8NoBom "$workdir\query\impl.js" @'
+function parseQuery(input) {
+  throw new Error("not implemented");
+}
+module.exports = { parseQuery };
+'@
+            Write-Utf8NoBom "$workdir\query\test.js" @'
+const assert = require("assert");
+const { parseQuery } = require("./impl");
+assert.deepStrictEqual(parseQuery("x=1&y=hello"), { x: "1", y: "hello" });
+console.log("query-ok");
+'@
+            Write-Utf8NoBom "$workdir\hex\impl.js" @'
+function hexToRgb(hex) {
+  throw new Error("not implemented");
+}
+module.exports = { hexToRgb };
+'@
+            Write-Utf8NoBom "$workdir\hex\test.js" @'
+const assert = require("assert");
+const { hexToRgb } = require("./impl");
+assert.deepStrictEqual(hexToRgb("#ff8800"), [255, 136, 0]);
+console.log("hex-ok");
+'@
+        }
+        Prompt = {
+            param($workdir)
+            "Six independent modules under $workdir each contain an unimplemented function that currently fails its test. Implement the function in each module so its test passes, without editing any test file, then run every test and report which modules pass."
+        }
+        Score = {
+            param($workdir, $result, $stats)
+            $mods = "slug", "chunk", "roman", "wordcount", "query", "hex"
+            $results = @{}
+            $correct = $true
+            foreach ($m in $mods) {
+                $ok = Test-NodeScript "$workdir\$m\test.js"
+                $results[$m] = $ok
+                if (-not $ok) { $correct = $false }
+            }
+            $anyAgent = $stats.agentCallCount -gt 0
+            $nonSearcherAgent = $stats.nonSearcherAgentCallCount -gt 0
+            $parallel = $stats.maxParallelAgentCalls -ge 2
+            $noDuplicate = $stats.duplicateWriteCount -eq 0
+            $passList = ($mods | ForEach-Object { "$($_)=$($results[$_])" }) -join " "
+            return @{
+                pass = $correct -and $noDuplicate
+                detail = "tests[$passList] anyAgent=$anyAgent nonSearcherAgent=$nonSearcherAgent parallel=$parallel noDuplicate=$noDuplicate duplicateWrites=$($stats.duplicateWriteCount)"
             }
         }
     }

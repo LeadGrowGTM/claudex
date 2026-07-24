@@ -92,7 +92,15 @@ Matched Claudex vs native runs, `acceptEdits`, main `--effort max`. Each cell is
 
 P1 shows no latency penalty versus P0 on any scenario and a faster classifier (10.8s vs 15.0s), with correctness at 100 percent, `tool-runner` resolving to `claude-haiku-4-5` in 3/3 routing runs, and no new permission bypass. Per plan gate this is the adopted profile.
 
-**Organic delegation, measured not asserted.** Under matched settings Claudex organically delegated the three-module task to three parallel non-`smart-searcher` subagents in 3/3 runs. Native Claude Code did the same task inline in 3/3 runs (zero Agent calls, ~33s). So Claudex does not trail native on organic delegation - it exceeds it. But because native sets a zero-delegation baseline on this fixture, the fixture cannot prove a symmetric "delegates exactly like native" claim; treat that narrower claim as unproven and redesign the fixture (a task native itself chooses to fan out on) before asserting it. The `nonSearcherAgentCallCount` metric excludes the mandatory `smart-searcher` so this evidence is organic implementation delegation, not forced availability.
+**Organic delegation, measured not asserted.** Under matched settings Claudex organically delegated the three-module task to three parallel non-`smart-searcher` subagents in 3/3 runs. Native Claude Code did the same task inline in 3/3 runs (zero Agent calls, ~33s). So Claudex does not trail native on organic delegation - it exceeds it. The `nonSearcherAgentCallCount` metric excludes the mandatory `smart-searcher` so this evidence is organic implementation delegation, not forced availability.
+
+**Fixture redesign attempt (`organic6`, 2026-07-24).** The three-module fixture is small enough that native inlines it, so it cannot prove a symmetric "delegates exactly like native" claim. To test whether that is a size artifact, `organic6` scales the task to six unrelated from-scratch implementations (slugify, chunk, roman numerals, word count, query parse, hex-to-rgb), each with its own failing test, outcome-only prompt. Result on the identical fixture:
+
+| | native-policy | claudex-policy |
+|---|---|---|
+| organic6 (6 modules) | PASS 100-110s x2, **inline (0 agents)** | PASS 712s x1, delegated (**6 parallel subagents**, one per module) |
+
+Native still inlined all six in 2/2 runs. So native's non-delegation is **scale-independent**, not a fixture artifact - native Claude Code genuinely prefers inline execution for "implement N independent functions" work at both three and six modules. Claudex, by contrast, scales its fan-out with breadth (3 modules -> 3 parallel, 6 -> 6). Two consequences: (1) the symmetric "delegates exactly like native" claim is not achievable by resizing this task class and is therefore dropped, not just unproven; a genuinely different task (one native itself chooses to fan out on) would be needed. (2) Claudex's aggressive delegation is not always faster - here it cost 712s versus native's ~100s inline, because fan-out overhead exceeds its benefit when each unit is small. Delegation is present and scales (the parity concern); latency-optimality of that delegation is a separate question this fixture flags but does not resolve.
 
 ## Findings
 
