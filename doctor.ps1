@@ -102,6 +102,33 @@ if ($settings) {
     Check "routing: Codex-only skills" ($codexOverrides.Count -eq 8) "$($codexOverrides.Count)/8 hidden from automatic routing"
 }
 
+# 3c. agent model drift (read-only, non-fatal - never flips doctor unhealthy).
+# Every installed subagent pins a model in its frontmatter. Claude Code matches
+# the ID against its registry exactly, then the proxy maps it via
+# oauth-model-alias. A dated/variant ID the alias map misses (e.g.
+# claude-sonnet-4-6) 502s "unknown provider" at spawn. Warn so the operator adds
+# an alias; a bare tier name or an installed-config alias is already resolvable.
+$agentsDir = "$env:USERPROFILE\.claude\agents"
+if (Test-Path $agentsDir) {
+    $resolvable = @("opus", "sonnet", "haiku", "claude-sonnet-5", "claude-haiku-4-5")
+    if ($confOk) {
+        foreach ($m in [regex]::Matches($conf, 'alias:\s*"([^"]+)"')) {
+            $resolvable += $m.Groups[1].Value
+        }
+    }
+    $unmapped = 0
+    foreach ($agentFile in @(Get-ChildItem $agentsDir -Filter "*.md" -ErrorAction SilentlyContinue)) {
+        $mm = [regex]::Match((Get-Content $agentFile.FullName -Raw), '(?m)^model:\s*(\S+)\s*$')
+        if (-not $mm.Success) { continue }
+        $model = $mm.Groups[1].Value
+        if ($resolvable -notcontains $model) {
+            $unmapped++
+            Warn "agent model unmapped" "$($agentFile.Name) pins '$model' - no bare tier, installed cliproxyapi.conf alias, or DEFAULT model pin resolves it; add an oauth-model-alias entry"
+        }
+    }
+    if ($unmapped -eq 0) { Check "agent models mapped" $true "all ~\.claude\agents frontmatter models resolve" }
+}
+
 # 4. proxy process + port
 $proc = Get-Process cli-proxy-api -ErrorAction SilentlyContinue | Select-Object -First 1
 Check "proxy process" ([bool]$proc) $(if ($proc) { "pid $($proc.Id)" } else { "not running (claudex auto-starts it, or run install.ps1)" })

@@ -87,12 +87,16 @@ function claudex {
     $origBase       = $env:ANTHROPIC_BASE_URL
     $origToken      = $env:ANTHROPIC_AUTH_TOKEN
     $origHaiku      = $env:ANTHROPIC_DEFAULT_HAIKU_MODEL
+    $origSonnet     = $env:ANTHROPIC_DEFAULT_SONNET_MODEL
     $origFirstParty = $env:_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL
     $origWindow     = $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW
     try {
         $env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8317"
         $env:ANTHROPIC_AUTH_TOKEN = $proxyKey
         $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = "claude-haiku-4-5"
+        # Bare `sonnet` agents (e.g. task-orchestrator) otherwise resolve to a
+        # version-dependent ID that may miss the claude-sonnet-5 alias and 502.
+        $env:ANTHROPIC_DEFAULT_SONNET_MODEL = "claude-sonnet-5"
         $env:_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL = "1"
         # _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL also satisfies Claude Code's
         # native-1M gate, so claude-opus-4-8 / claude-sonnet-5 would otherwise get
@@ -128,6 +132,7 @@ function claudex {
         $env:ANTHROPIC_BASE_URL = $origBase
         $env:ANTHROPIC_AUTH_TOKEN = $origToken
         $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = $origHaiku
+        $env:ANTHROPIC_DEFAULT_SONNET_MODEL = $origSonnet
         $env:_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL = $origFirstParty
         $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = $origWindow
         $env:MAX_MCP_OUTPUT_TOKENS = $origMcpOut

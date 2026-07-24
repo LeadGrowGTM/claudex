@@ -217,6 +217,8 @@ $launcherPs = Get-Content $launcherPsPath -Raw
 $launcherSh = Get-Content $launcherShPath -Raw
 Check "Windows launcher defaults acceptEdits" ($launcherPs -match '\$extra\s*=\s*@\("--settings",\s*\$settingsPath,\s*"--permission-mode",\s*"acceptEdits"\)') "settings plus acceptEdits"
 Check "Linux launcher defaults acceptEdits" ($launcherSh -match 'local extra=\(--settings "\$settings_path" --permission-mode acceptEdits\)') "settings plus acceptEdits"
+Check "Windows launcher pins sonnet default" ($launcherPs -match '\$env:ANTHROPIC_DEFAULT_SONNET_MODEL\s*=\s*"claude-sonnet-5"') "bare sonnet agents resolve claude-sonnet-5"
+Check "Linux launcher pins sonnet default" ($launcherSh -match 'ANTHROPIC_DEFAULT_SONNET_MODEL="claude-sonnet-5"') "bare sonnet agents resolve claude-sonnet-5"
 Check "Windows launcher supports explicit Auto" ($launcherPs -match 'if \(\$Auto\).*--permission-mode", "auto"') "-Auto"
 Check "Linux launcher supports explicit Auto" ($launcherSh -match '-Auto\|--auto') "--auto"
 Check "Windows launcher keeps explicit Yolo" ($launcherPs -match 'if \(\$Yolo\).*--dangerously-skip-permissions') "-Yolo"
@@ -270,6 +272,8 @@ Check "effort switcher rejects unknown payload" ($effortSwitcher -match 'proxy p
 Check "effort switcher verifies post-write state" ($effortSwitcher -match 'effort profile verification failed after write') "fail closed"
 
 $proxyTemplate = Get-Content $proxyTemplatePath -Raw
+Check "template aliases dated sonnet variant" ($proxyTemplate -match 'alias:\s*"claude-sonnet-4-6"') "claude-sonnet-4-6 -> gpt-5.6-terra"
+Check "template aliases dated haiku variant" ($proxyTemplate -match 'alias:\s*"claude-haiku-4-5-20251001"') "claude-haiku-4-5-20251001 -> gpt-5.3-codex-spark"
 $profile = "unknown"
 if ($proxyTemplate -match 'name:\s*"gpt-5\.6-\*"' -and $proxyTemplate -match '"reasoning\.effort":\s*"max"') {
     $profile = "P0"
