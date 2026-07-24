@@ -107,6 +107,34 @@ if [ "$SETTINGS_VALID" = "1" ]; then
     check "$([ "$CODEX_COUNT" -eq 8 ] && echo 1 || echo 0)" "routing: Codex-only skills" "$CODEX_COUNT/8 hidden from automatic routing"
 fi
 
+# 2c. agent model drift (read-only, non-fatal - never flips doctor unhealthy).
+# Every installed subagent pins a model in its frontmatter. Claude Code matches
+# the ID exactly, then the proxy maps it via oauth-model-alias. A dated/variant ID
+# the alias map misses (e.g. claude-sonnet-4-6) 502s "unknown provider" at spawn.
+# Warn so the operator adds an alias; a bare tier name or an installed-config
+# alias is already resolvable.
+AGENTS_DIR="$HOME/.claude/agents"
+if [ -d "$AGENTS_DIR" ]; then
+    RESOLVABLE=" opus sonnet haiku claude-sonnet-5 claude-haiku-4-5 "
+    if [ -f "$CONF" ]; then
+        for a in $(grep -oE 'alias:[[:space:]]*"[^"]+"' "$CONF" | sed -E 's/.*"([^"]+)".*/\1/'); do
+            RESOLVABLE="$RESOLVABLE$a "
+        done
+    fi
+    UNMAPPED=0
+    for agent_file in "$AGENTS_DIR"/*.md; do
+        [ -e "$agent_file" ] || continue
+        model="$(awk '/^model:/{print $2; exit}' "$agent_file")"
+        [ -z "$model" ] && continue
+        case "$RESOLVABLE" in
+            *" $model "*) ;;
+            *) UNMAPPED=$((UNMAPPED+1))
+               warns "agent model unmapped" "$(basename "$agent_file") pins '$model' - no bare tier, installed cliproxyapi.conf alias, or DEFAULT model pin resolves it; add an oauth-model-alias entry" ;;
+        esac
+    done
+    [ "$UNMAPPED" -eq 0 ] && ok "agent models mapped" "all ~/.claude/agents frontmatter models resolve"
+fi
+
 # 3. proxy process + port + AGE
 PID="$(pgrep -x cli-proxy-api 2>/dev/null | head -1 || true)"
 if [ -n "$PID" ]; then

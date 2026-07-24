@@ -123,10 +123,15 @@ claudex() {
     # flagship main session sets its own reasoning with --effort max here. Terra
     # classifier and Spark subagents stay at passthrough effort. A user --effort
     # in "${forwarded[@]}" wins over this default (it comes later on the line).
+    #
+    # ANTHROPIC_DEFAULT_SONNET_MODEL: bare `sonnet` agents (e.g. task-orchestrator)
+    # otherwise resolve to a version-dependent ID that may miss the claude-sonnet-5
+    # alias and 502; pin it like the haiku default.
     env \
         ANTHROPIC_BASE_URL="http://127.0.0.1:8317" \
         ANTHROPIC_AUTH_TOKEN="$key" \
         ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5" \
+        ANTHROPIC_DEFAULT_SONNET_MODEL="claude-sonnet-5" \
         _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1 \
         CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000 \
         MAX_MCP_OUTPUT_TOKENS=25000 \
