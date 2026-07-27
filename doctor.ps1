@@ -225,6 +225,17 @@ foreach ($p in @($hostProfile, $PROFILE.CurrentUserAllHosts)) {
 Check "context window pinned" $fnPinned "without it, native_1m aliases get a 1M budget vs ~258k upstream"
 Check "context window headroom" $fnHeadroom "AUTO_COMPACT_WINDOW must be <=210000: ~258k ceiling minus tokenizer skew + one fat tool result"
 
+# 7d. durable backup pin. Claude Code 2.1.219+ resolves the auto-compact window
+# from CLAUDE_CODE_AUTO_COMPACT_WINDOW first, then a settings `autoCompactWindow`
+# field. claudex.settings.json carries the same 200000 so the window stays pinned
+# even if the env var ever fails to propagate. If present it must respect the same
+# 100000..210000 band (Claude Code clamps the field to >=1e5); absent is fine.
+$settingsWindowOk = $true
+if ($settings -and ($null -ne $settings.autoCompactWindow)) {
+    $settingsWindowOk = ([int]$settings.autoCompactWindow -ge 100000 -and [int]$settings.autoCompactWindow -le 210000)
+}
+Check "settings autoCompactWindow headroom" $settingsWindowOk "claudex.settings.json autoCompactWindow, if set, must be 100000..210000"
+
 # 7c. no claudex env vars leaked into this shell. The function scopes them to its
 # own invocation and restores them in a finally block, so they must not be set
 # here. If they are, this shell's plain `claude` loses Remote Control (gate is

@@ -229,6 +229,15 @@ if [ -f "$FN" ]; then
           "context window headroom" "AUTO_COMPACT_WINDOW must be <=210000: ~258k ceiling minus tokenizer skew + one fat tool result"
 fi
 
+# 7d. durable backup pin. Claude Code 2.1.219+ resolves the auto-compact window
+# from CLAUDE_CODE_AUTO_COMPACT_WINDOW first, then a settings autoCompactWindow
+# field. claudex.settings.json carries the same 200000 so the window stays pinned
+# even if the env var fails to propagate. If present it must respect the same
+# 100000..210000 band; absent is fine because the env pin above covers it.
+sw=$(grep -oE '"autoCompactWindow"[[:space:]]*:[[:space:]]*[0-9]+' "$SETTINGS" 2>/dev/null | grep -oE '[0-9]+$' | head -1)
+check "$(if [ -z "$sw" ] || { [ "$sw" -ge 100000 ] && [ "$sw" -le 210000 ]; }; then echo 1; else echo 0; fi)" \
+      "settings autoCompactWindow headroom" "claudex.settings.json autoCompactWindow, if set, must be 100000..210000"
+
 # 7b. recent proxy failures, metadata only. Request-body sections are skipped.
 RECENT_FILES=0; ERROR_500=0; ERROR_502=0; ERROR_503=0; AUTH_UNAVAILABLE=0; CONTEXT_CANCELED=0
 while IFS= read -r -d '' file; do

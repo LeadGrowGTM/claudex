@@ -65,6 +65,7 @@ $propertyNames = @(Get-PropertyNames $settings)
 $secretFields = @($propertyNames | Where-Object { $_ -match '(?i)password|token|api.?key|credential|client.?secret|refresh.?token|private.?key' })
 Check "settings has no secret-shaped fields" ($secretFields.Count -eq 0) ("matches=" + ($secretFields -join ','))
 Check "settings has no env block" ($propertyNames -notcontains "env") "secrets stay outside settings"
+Check "settings pins autoCompactWindow" ($settings.autoCompactWindow -eq 200000) "durable backup to the env-var window pin (Claude Code 2.1.219+ settings field)"
 
 $allow = @($settings.permissions.allow)
 $ask = @($settings.permissions.ask)
