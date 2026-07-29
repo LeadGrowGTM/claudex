@@ -10,7 +10,7 @@
 #   ... -SkipLogin          skip the interactive Codex OAuth step
 #   ... -SkipAutostart      don't register the Startup-folder launcher
 #   ... -SkipProfile        don't touch the PowerShell profile
-#   ... -SkipAuthSync       don't register the Codex auth-sync watcher (see auth/README.md)
+#   ... -SkipAuthSync       don't register the Codex auth-sync watcher (see auth/sync-codex-auth.ps1)
 
 param(
     [string]$Version = "7.2.83",
