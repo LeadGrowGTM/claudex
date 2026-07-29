@@ -112,7 +112,7 @@ if ($Watch) {
     $watcher = New-Object System.IO.FileSystemWatcher
     $watcher.Path = $codexAuthDir
     $watcher.Filter = Split-Path $codexAuthPath -Leaf
-    $watcher.NotifyFilter = [System.IO.NotifyFilters]::LastWrite
+    $watcher.NotifyFilter = [System.IO.NotifyFilters]::LastWrite -bor [System.IO.NotifyFilters]::FileName
     $watcher.EnableRaisingEvents = $true
     Write-SyncLog "watching $codexAuthPath for changes"
 
