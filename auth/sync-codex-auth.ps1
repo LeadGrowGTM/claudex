@@ -85,7 +85,7 @@ function Restart-Proxy {
     if ((Test-Path $nativeCompactionMarker) -and (Test-Path $nativeCompactionExe)) {
         $exe = $nativeCompactionExe
     }
-    $proc | Stop-Process -Force
+    $proc | Stop-Process
     $proc.WaitForExit(5000) | Out-Null
     Start-Process -FilePath $exe -ArgumentList "-config", $confPath -WorkingDirectory $proxyDir -WindowStyle Hidden
     Write-SyncLog "restarted proxy ($exe) to pick up synced credential"
@@ -106,8 +106,11 @@ if ($Watch) {
     New-Item -ItemType Directory -Force (Split-Path $pidPath -Parent) | Out-Null
     [System.IO.File]::WriteAllText($pidPath, "$PID", [System.Text.UTF8Encoding]::new($false))
 
+    $codexAuthDir = Split-Path $codexAuthPath -Parent
+    New-Item -ItemType Directory -Force $codexAuthDir | Out-Null
+
     $watcher = New-Object System.IO.FileSystemWatcher
-    $watcher.Path = Split-Path $codexAuthPath -Parent
+    $watcher.Path = $codexAuthDir
     $watcher.Filter = Split-Path $codexAuthPath -Leaf
     $watcher.NotifyFilter = [System.IO.NotifyFilters]::LastWrite
     $watcher.EnableRaisingEvents = $true
@@ -116,6 +119,7 @@ if ($Watch) {
     $action = { Sync-CodexAuth }
     Register-ObjectEvent -InputObject $watcher -EventName Changed -Action $action | Out-Null
     Register-ObjectEvent -InputObject $watcher -EventName Created -Action $action | Out-Null
+    Register-ObjectEvent -InputObject $watcher -EventName Renamed -Action $action | Out-Null
 
     while ($true) {
         Wait-Event -Timeout 60 | Remove-Event
