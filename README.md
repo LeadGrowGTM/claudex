@@ -67,7 +67,7 @@ The installer (idempotent, re-run any time to upgrade or repair):
 8. Starts the proxy and runs the interactive Codex OAuth login (browser)
 9. Smoke-tests both model tiers end-to-end
 
-Flags: `-Version <x.y.z>`, `-NativeCompaction`, `-StableProxy`, `-SkipLogin`, `-SkipAutostart`, `-SkipProfile`.
+Flags: `-Version <x.y.z>`, `-NativeCompaction`, `-StableProxy`, `-SkipLogin`, `-SkipAutostart`, `-SkipProfile`, `-SkipAuthSync`.
 
 ## Install (Linux / WSL2)
 
@@ -144,7 +144,7 @@ powershell -ExecutionPolicy Bypass -File doctor.ps1 -Smoke   # + live calls thro
 ./doctor.sh --smoke    # + live calls through both tiers
 ```
 
-Checks every link: Claude CLI, the selected proxy channel (stable router-for-me release or the pinned native-compaction fork), native source pin and cleanliness when that channel is active, proxy binary/key/config, all model aliases, Claudex settings JSON and key policy rules, installed launcher mode, legacy wildcard effort override, running binary/channel match, proxy process and port 8317 ownership, live `/v1/models`, Codex credential, context-window pin, environment leakage, and recent proxy 500/502/503, `auth_unavailable`, and `context canceled` metadata. Request bodies are skipped. Exits nonzero on any failed health check - first thing to run when claudex misbehaves.
+Checks every link: Claude CLI, the selected proxy channel (stable router-for-me release or the pinned native-compaction fork), native source pin and cleanliness when that channel is active, proxy binary/key/config, all model aliases, Claudex settings JSON and key policy rules, installed launcher mode, legacy wildcard effort override, running binary/channel match, proxy process and port 8317 ownership, live `/v1/models`, Codex credential, the Codex auth-sync watcher (Windows), context-window pin, environment leakage, and recent proxy 500/502/503, `auth_unavailable`, and `context canceled` metadata. Request bodies are skipped. Exits nonzero on any failed health check - first thing to run when claudex misbehaves.
 
 ## Tests
 
@@ -291,6 +291,7 @@ Run `doctor.ps1` first - it pinpoints the broken link. Common fixes:
 install.ps1 / install.sh                    one-command setup (idempotent) - Windows / Linux
 doctor.ps1  / doctor.sh                     read-only health check (-Smoke / --smoke for live calls)
 uninstall.ps1                               removes autostart + profile fn, keeps credentials
+auth/sync-codex-auth.ps1                    mirrors Codex CLI's auth.json into cli-proxy-api's credential
 profile/claudex-function.ps1                Windows launcher source
 profile/claudex-function.sh                 bash/zsh launcher source - keep modes in sync
 config/cliproxyapi.conf.template            proxy aliases and current effort profile

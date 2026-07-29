@@ -12,6 +12,16 @@ if ($proc) { $proc | Stop-Process -Force; Write-Host ">> proxy stopped" }
 $startup = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\CLIProxyAPI.vbs"
 if (Test-Path $startup) { Remove-Item $startup; Write-Host ">> autostart removed" }
 
+$syncStartup = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\ClaudexAuthSync.vbs"
+if (Test-Path $syncStartup) { Remove-Item $syncStartup; Write-Host ">> Codex auth-sync watcher autostart removed" }
+$syncPidPath = "$env:USERPROFILE\.cli-proxy-api\logs\sync-codex-auth.pid"
+if (Test-Path $syncPidPath) {
+    $syncPid = (Get-Content $syncPidPath -Raw).Trim()
+    $syncProc = Get-Process -Id $syncPid -ErrorAction SilentlyContinue
+    if ($syncProc) { $syncProc | Stop-Process -Force; Write-Host ">> Codex auth-sync watcher stopped" }
+    Remove-Item $syncPidPath -ErrorAction SilentlyContinue
+}
+
 $hostProfile = "$env:USERPROFILE\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
 foreach ($profilePath in @($hostProfile, $PROFILE.CurrentUserAllHosts)) {
     if ($profilePath -and (Test-Path $profilePath)) {
