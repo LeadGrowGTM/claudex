@@ -228,13 +228,24 @@ Check "context window headroom" $fnHeadroom "AUTO_COMPACT_WINDOW must be <=21000
 # 7d. durable backup pin. Claude Code 2.1.219+ resolves the auto-compact window
 # from CLAUDE_CODE_AUTO_COMPACT_WINDOW first, then a settings `autoCompactWindow`
 # field. claudex.settings.json carries the same 200000 so the window stays pinned
-# even if the env var ever fails to propagate. If present it must respect the same
-# 100000..210000 band (Claude Code clamps the field to >=1e5); absent is fine.
+# even if the env var ever fails to propagate. Valid values are JSON numbers whose
+# value is an integer in 100000..1000000; invalid values are ignored. Claudex also
+# requires the existing 210000 headroom ceiling. An absent property remains fine.
 $settingsWindowOk = $true
-if ($settings -and ($null -ne $settings.autoCompactWindow)) {
-    $settingsWindowOk = ([int]$settings.autoCompactWindow -ge 100000 -and [int]$settings.autoCompactWindow -le 210000)
+if ($settings) {
+    $settingsWindowProperty = $settings.PSObject.Properties["autoCompactWindow"]
+    if ($settingsWindowProperty) {
+        $settingsWindowValue = $settingsWindowProperty.Value
+        $numericTypes = @([byte], [sbyte], [int16], [uint16], [int32], [uint32], [int64], [uint64], [single], [double], [decimal])
+        $settingsWindowIsNumeric = ($null -ne $settingsWindowValue -and $numericTypes -contains $settingsWindowValue.GetType())
+        $settingsWindowSchemaOk = ($settingsWindowIsNumeric -and
+            $settingsWindowValue -ge 100000 -and
+            $settingsWindowValue -le 1000000 -and
+            ([decimal]$settingsWindowValue % 1 -eq 0))
+        $settingsWindowOk = ($settingsWindowSchemaOk -and $settingsWindowValue -le 210000)
+    }
 }
-Check "settings autoCompactWindow headroom" $settingsWindowOk "claudex.settings.json autoCompactWindow, if set, must be 100000..210000"
+Check "settings autoCompactWindow headroom" $settingsWindowOk "claudex.settings.json autoCompactWindow, if set, must be a JSON integer in 100000..1000000 and <=210000 for Claudex headroom"
 
 # 7c. no claudex env vars leaked into this shell. The function scopes them to its
 # own invocation and restores them in a finally block, so they must not be set

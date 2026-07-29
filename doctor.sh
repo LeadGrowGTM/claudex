@@ -86,10 +86,13 @@ fi
 SETTINGS="$PROXY_DIR/claudex.settings.json"
 check "$([ -f "$SETTINGS" ] && echo 1 || echo 0)" "Claudex settings file" "$SETTINGS"
 SETTINGS_VALID=0
+SETTINGS_JSON_PARSER=""
 if [ -f "$SETTINGS" ]; then
     if command -v jq >/dev/null 2>&1; then
+        SETTINGS_JSON_PARSER="jq"
         jq -e . "$SETTINGS" >/dev/null 2>&1 && SETTINGS_VALID=1
     elif command -v python3 >/dev/null 2>&1; then
+        SETTINGS_JSON_PARSER="python3"
         python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$SETTINGS" 2>/dev/null && SETTINGS_VALID=1
     else
         warns "Claudex settings JSON" "jq or python3 is required for validation"
@@ -232,11 +235,62 @@ fi
 # 7d. durable backup pin. Claude Code 2.1.219+ resolves the auto-compact window
 # from CLAUDE_CODE_AUTO_COMPACT_WINDOW first, then a settings autoCompactWindow
 # field. claudex.settings.json carries the same 200000 so the window stays pinned
-# even if the env var fails to propagate. If present it must respect the same
-# 100000..210000 band; absent is fine because the env pin above covers it.
-sw=$(grep -oE '"autoCompactWindow"[[:space:]]*:[[:space:]]*[0-9]+' "$SETTINGS" 2>/dev/null | grep -oE '[0-9]+$' | head -1)
-check "$(if [ -z "$sw" ] || { [ "$sw" -ge 100000 ] && [ "$sw" -le 210000 ]; }; then echo 1; else echo 0; fi)" \
-      "settings autoCompactWindow headroom" "claudex.settings.json autoCompactWindow, if set, must be 100000..210000"
+# even if the env var fails to propagate. Valid values are JSON numbers whose
+# value is an integer in 100000..1000000; invalid values are ignored. Claudex also
+# requires the existing 210000 headroom ceiling. An absent property remains fine.
+SETTINGS_WINDOW_STATE="absent"
+SETTINGS_WINDOW_VALUE=""
+if [ "$SETTINGS_VALID" = "1" ]; then
+    if [ "$SETTINGS_JSON_PARSER" = "jq" ]; then
+        if jq -e 'type == "object" and has("autoCompactWindow")' "$SETTINGS" >/dev/null 2>&1; then
+            SETTINGS_WINDOW_STATE="invalid"
+            if jq -e '
+                .autoCompactWindow as $window
+                | if ($window | type) == "number" then
+                    (($window | floor) == $window and $window >= 100000 and $window <= 1000000)
+                  else false
+                  end
+            ' "$SETTINGS" >/dev/null 2>&1; then
+                SETTINGS_WINDOW_STATE="valid"
+                SETTINGS_WINDOW_VALUE="$(jq -r '.autoCompactWindow | floor' "$SETTINGS")"
+            fi
+        fi
+    elif [ "$SETTINGS_JSON_PARSER" = "python3" ]; then
+        SETTINGS_WINDOW_RESULT="$(python3 - "$SETTINGS" <<'PY'
+import json
+import math
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as settings_file:
+    settings = json.load(settings_file)
+if not isinstance(settings, dict) or "autoCompactWindow" not in settings:
+    print("absent")
+else:
+    window = settings["autoCompactWindow"]
+    is_integer = type(window) is int or (
+        type(window) is float and math.isfinite(window) and window.is_integer()
+    )
+    if is_integer and 100000 <= window <= 1000000:
+        print(f"valid:{int(window)}")
+    else:
+        print("invalid")
+PY
+)"
+        case "$SETTINGS_WINDOW_RESULT" in
+            valid:*) SETTINGS_WINDOW_STATE="valid"; SETTINGS_WINDOW_VALUE="${SETTINGS_WINDOW_RESULT#valid:}" ;;
+            absent) SETTINGS_WINDOW_STATE="absent" ;;
+            *) SETTINGS_WINDOW_STATE="invalid" ;;
+        esac
+    fi
+fi
+SETTINGS_WINDOW_OK=1
+if [ "$SETTINGS_WINDOW_STATE" = "invalid" ]; then
+    SETTINGS_WINDOW_OK=0
+elif [ "$SETTINGS_WINDOW_STATE" = "valid" ] && [ "$SETTINGS_WINDOW_VALUE" -gt 210000 ]; then
+    SETTINGS_WINDOW_OK=0
+fi
+check "$SETTINGS_WINDOW_OK" \
+      "settings autoCompactWindow headroom" "claudex.settings.json autoCompactWindow, if set, must be a JSON integer in 100000..1000000 and <=210000 for Claudex headroom"
 
 # 7b. recent proxy failures, metadata only. Request-body sections are skipped.
 RECENT_FILES=0; ERROR_500=0; ERROR_502=0; ERROR_503=0; AUTH_UNAVAILABLE=0; CONTEXT_CANCELED=0
