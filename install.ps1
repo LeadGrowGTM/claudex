@@ -10,6 +10,7 @@
 #   ... -SkipLogin          skip the interactive Codex OAuth step
 #   ... -SkipAutostart      don't register the Startup-folder launcher
 #   ... -SkipProfile        don't touch the PowerShell profile
+#   ... -SkipAuthSync       don't register the Codex auth-sync watcher (see auth/README.md)
 
 param(
     [string]$Version = "7.2.83",
@@ -17,7 +18,8 @@ param(
     [switch]$StableProxy,
     [switch]$SkipLogin,
     [switch]$SkipAutostart,
-    [switch]$SkipProfile
+    [switch]$SkipProfile,
+    [switch]$SkipAuthSync
 )
 
 $ErrorActionPreference = "Stop"
@@ -307,6 +309,28 @@ if (-not $SkipAutostart) {
     $startup = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\CLIProxyAPI.vbs"
     Copy-Item $vbs $startup -Force
     Step "autostart registered -> $startup"
+}
+
+# --- 5b. Codex auth-sync watcher --------------------------------------------
+# Codex CLI (~/.codex) and cli-proxy-api's own Codex login both authenticate
+# the same OpenAI account under the same OAuth client_id, and OpenAI allows
+# only one live refresh_token per (client_id, account) - whichever refreshes
+# last invalidates the other's copy. This watcher mirrors Codex CLI's fresher
+# tokens into cli-proxy-api's credential the instant Codex CLI refreshes, so
+# the proxy's copy never goes stale. See auth/sync-codex-auth.ps1 for detail.
+if (-not $SkipAuthSync) {
+    $syncScript = "$repoRoot\auth\sync-codex-auth.ps1"
+    $syncVbs = "$proxyDir\start-hidden-auth-sync.vbs"
+    $syncVbsContent = "CreateObject(""Wscript.Shell"").Run ""powershell.exe -NoProfile -ExecutionPolicy Bypass -File """"$syncScript"""" -Watch"", 0, False"
+    [System.IO.File]::WriteAllText($syncVbs, $syncVbsContent, [System.Text.UTF8Encoding]::new($false))
+    $syncStartup = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\ClaudexAuthSync.vbs"
+    Copy-Item $syncVbs $syncStartup -Force
+    Step "Codex auth-sync watcher registered -> $syncStartup"
+    $wscript = Get-Command "wscript.exe" -ErrorAction SilentlyContinue
+    if ($wscript) {
+        Start-Process -FilePath $wscript.Source -ArgumentList "`"$syncVbs`""
+        Step "Codex auth-sync watcher started"
+    }
 }
 
 # --- 6. PowerShell profile function -----------------------------------------

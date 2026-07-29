@@ -185,6 +185,29 @@ if ($portOwnedByProxy -and (Test-Path "$proxyDir\.proxykey")) {
 $cred = Get-ChildItem $authDir -Filter "codex-*.json" -ErrorAction SilentlyContinue | Select-Object -First 1
 Check "codex credential" ([bool]$cred) $(if ($cred) { $cred.Name } else { "run: $proxyDir\cli-proxy-api.exe -codex-login" })
 
+# 6b. Codex auth-sync watcher (mirrors ~/.codex/auth.json into $cred so Codex
+# CLI's own refresh doesn't invalidate cli-proxy-api's refresh_token - both
+# authenticate the same OpenAI account under the same OAuth client_id).
+$syncStartup = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\ClaudexAuthSync.vbs"
+Check "auth-sync watcher registered" (Test-Path $syncStartup) $(if (Test-Path $syncStartup) { $syncStartup } else { "run install.ps1 (or without -SkipAuthSync)" })
+$syncPidPath = "$authDir\logs\sync-codex-auth.pid"
+$syncRunning = $false
+if (Test-Path $syncPidPath) {
+    $syncPid = (Get-Content $syncPidPath -Raw).Trim()
+    $syncRunning = [bool](Get-Process -Id $syncPid -ErrorAction SilentlyContinue)
+}
+Check "auth-sync watcher running" $syncRunning $(if ($syncRunning) { "pid $syncPid" } else { "not running - reboot or run: $PSScriptRoot\auth\sync-codex-auth.ps1 -Watch" })
+$codexCliAuth = "$env:USERPROFILE\.codex\auth.json"
+if ($cred -and (Test-Path $codexCliAuth)) {
+    try {
+        $cliTokens = (Get-Content $codexCliAuth -Raw | ConvertFrom-Json).tokens
+        $proxyCred = Get-Content $cred.FullName -Raw | ConvertFrom-Json
+        Check "auth-sync in sync" ($cliTokens.refresh_token -eq $proxyCred.refresh_token) "Codex CLI and cli-proxy-api share the same refresh_token"
+    } catch {
+        Warn "auth-sync in sync" "could not compare - $($_.Exception.Message)"
+    }
+}
+
 # 7. profile function
 $hostProfile = "$env:USERPROFILE\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
 $profileOk = $false
