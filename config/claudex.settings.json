@@ -323,5 +323,6 @@
     "codex-smart-searcher": "user-invocable-only",
     "codex-task-orchestrator": "user-invocable-only",
     "codex-tool-runner": "user-invocable-only"
-  }
+  },
+  "autoCompactWindow": 200000
 }

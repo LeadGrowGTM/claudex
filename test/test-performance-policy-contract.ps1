@@ -55,6 +55,19 @@ function Get-PropertyNames($Value) {
     return $names
 }
 
+function Get-AutoCompactWindowCheckStatus([string]$Output) {
+    if ($Output -match 'FAIL\s+settings autoCompactWindow headroom') { return "FAIL" }
+    if ($Output -match 'OK\s+settings autoCompactWindow headroom') { return "OK" }
+    return "MISSING"
+}
+
+function ConvertTo-BashPath([string]$Path, [string]$Kernel) {
+    if ($Kernel -eq "Linux" -and $Path -match '^([A-Za-z]):\\(.*)$') {
+        return "/mnt/$($Matches[1].ToLower())/$($Matches[2].Replace("\", "/"))"
+    }
+    return $Path.Replace("\", "/")
+}
+
 $settingsRaw = Get-Content $settingsPath -Raw
 $settings = $null
 try { $settings = $settingsRaw | ConvertFrom-Json } catch {}
@@ -65,6 +78,7 @@ $propertyNames = @(Get-PropertyNames $settings)
 $secretFields = @($propertyNames | Where-Object { $_ -match '(?i)password|token|api.?key|credential|client.?secret|refresh.?token|private.?key' })
 Check "settings has no secret-shaped fields" ($secretFields.Count -eq 0) ("matches=" + ($secretFields -join ','))
 Check "settings has no env block" ($propertyNames -notcontains "env") "secrets stay outside settings"
+Check "settings pins autoCompactWindow" ($settings.autoCompactWindow -eq 200000) "durable backup to the env-var window pin (Claude Code 2.1.219+ settings field)"
 
 $allow = @($settings.permissions.allow)
 $ask = @($settings.permissions.ask)
@@ -245,6 +259,53 @@ $doctorPs = Get-Content $doctorPsPath -Raw
 $doctorSh = Get-Content $doctorShPath -Raw
 Check "doctors require Terra alias" (($doctorPs -match 'config: sonnet alias') -and ($doctorSh -match 'config: sonnet alias')) "Windows and Linux"
 Check "doctors verify live Terra alias" (($doctorPs -match 'alias live: claude-sonnet-5') -and ($doctorSh -match 'claude-opus-4-8 claude-sonnet-5 claude-haiku-4-5')) "Windows and Linux"
+Check "doctors enforce autoCompactWindow schema ceiling" (($doctorPs -match '1000000') -and ($doctorSh -match '1000000')) "inclusive schema range 100000..1000000"
+Check "Linux doctor avoids text parsing autoCompactWindow" ($doctorSh -notmatch '(?m)grep[^\r\n]*autoCompactWindow') "structured JSON only"
+Check "doctor wording uses ignore semantics" (($doctorPs -match '(?i)invalid values are ignored') -and ($doctorPs -notmatch '(?i)clamp')) "Claude Code ignores invalid settings"
+
+$autoCompactCases = @(
+    [pscustomobject]@{ Name = "absent property"; Json = '{}'; Expected = "OK" },
+    [pscustomobject]@{ Name = "valid integer"; Json = '{"autoCompactWindow":200000}'; Expected = "OK" },
+    [pscustomobject]@{ Name = "numeric string"; Json = '{"autoCompactWindow":"200000"}'; Expected = "FAIL" },
+    [pscustomobject]@{ Name = "decimal"; Json = '{"autoCompactWindow":200000.5}'; Expected = "FAIL" },
+    [pscustomobject]@{ Name = "below minimum"; Json = '{"autoCompactWindow":99999}'; Expected = "FAIL" },
+    [pscustomobject]@{ Name = "above headroom"; Json = '{"autoCompactWindow":210001}'; Expected = "FAIL" },
+    [pscustomobject]@{ Name = "above schema maximum"; Json = '{"autoCompactWindow":1000001}'; Expected = "FAIL" }
+)
+$doctorFixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("claudex-doctor-contract-{0}-{1}" -f $PID, [guid]::NewGuid().ToString("N"))
+$doctorFixtureProxyDir = Join-Path $doctorFixtureRoot ".cliproxyapi"
+[System.IO.Directory]::CreateDirectory($doctorFixtureProxyDir) | Out-Null
+$doctorFixtureSettings = Join-Path $doctorFixtureProxyDir "claudex.settings.json"
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+$powerShellExe = (Get-Process -Id $PID).Path
+$originalUserProfile = $env:USERPROFILE
+try {
+    $env:USERPROFILE = $doctorFixtureRoot
+    foreach ($case in $autoCompactCases) {
+        [System.IO.File]::WriteAllText($doctorFixtureSettings, $case.Json, $utf8NoBom)
+        $doctorOutput = (& $powerShellExe -NoProfile -ExecutionPolicy Bypass -File $doctorPsPath 2>&1 | Out-String)
+        $status = Get-AutoCompactWindowCheckStatus $doctorOutput
+        Check "Windows doctor autoCompactWindow: $($case.Name)" ($status -eq $case.Expected) "expected=$($case.Expected) actual=$status"
+    }
+} finally {
+    $env:USERPROFILE = $originalUserProfile
+}
+
+$bash = Get-Command "bash" -ErrorAction SilentlyContinue
+if ($bash) {
+    $bashKernel = (& $bash.Source -lc "uname -s").Trim()
+    $doctorShForBash = ConvertTo-BashPath $doctorShPath $bashKernel
+    $fixtureRootForBash = ConvertTo-BashPath $doctorFixtureRoot $bashKernel
+    foreach ($case in $autoCompactCases) {
+        [System.IO.File]::WriteAllText($doctorFixtureSettings, $case.Json, $utf8NoBom)
+        $bashCommand = "HOME='$fixtureRootForBash' bash <(tr -d '\r' < '$doctorShForBash')"
+        $doctorOutput = (& $bash.Source -lc $bashCommand 2>&1 | Out-String)
+        $status = Get-AutoCompactWindowCheckStatus $doctorOutput
+        Check "Linux doctor autoCompactWindow: $($case.Name)" ($status -eq $case.Expected) "expected=$($case.Expected) actual=$status"
+    }
+} else {
+    Write-Host "SKIP  Linux doctor autoCompactWindow behavior: bash unavailable" -ForegroundColor Yellow
+}
 
 $benchmark = Get-Content $benchmarkPath -Raw
 Check "benchmark requires explicit Live" (($benchmark -match 'if \(-not \$Live\)') -and ($benchmark -match 'Add -Live')) "quota guard"
