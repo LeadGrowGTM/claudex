@@ -2,3 +2,4 @@ test-output/
 *.log
 bench-output/
 .claude/
+.worktrees/
